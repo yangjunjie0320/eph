@@ -1,4 +1,4 @@
-import numpy, scipy
+import os, numpy, scipy, tempfile
 
 import pyscf
 from pyscf import lib, scf
@@ -15,7 +15,7 @@ KEEP_IMAG_FREQUENCY   = getattr(__config__, 'eph_keep_imaginary_frequency', Fals
 IMAG_CUTOFF_FREQUENCY = getattr(__config__, 'eph_imag_cutoff_frequency', 1e-4)
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                    mo1=None, max_memory=4000, verbose=None):
+                    max_memory=4000, verbose=None):
     log = logger.new_logger(eph_obj, verbose)
     t0 = (logger.process_clock(), logger.perf_counter())
 
@@ -31,66 +31,131 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     if mo_occ is None:
         mo_occ = scf_obj.mo_occ
 
-    # Check if the mo1 is provided
-    tmpfile = lib.chkfile.newfile(mol_obj, 'eph_tmpfile')
-    if mo1 is None:
-        eph_obj.make_h1(
-            mo_coeff, mo_occ, 
-            eph_obj.chkfile, 
-            None, log
-        )
-
-        mo1, mo_e1 = eph_obj.solve_mo1(
-            mo_energy, mo_coeff, mo_occ, 
-            eph_obj.chkfile, None, None, 
-            max_memory, log,
-        )
-
-        t1 = log.timer('solving mo1 eq', *t0)
-
-    if isinstance(mo1, str):
-        mo1 = lib.chkfile.load(mo1, 'scf_mo1')
-        mo1 = {int(k): mo1[k] for k in mo1}
-    assert isinstance(mo1, dict)
-
     nao, nmo = mo_coeff.shape
-    dvnuc = eph_obj.gen_vnuc_deriv()
-    dveff = eph_obj.gen_veff_deriv(mo_occ, mo_coeff)
-    dvind = eph_obj.gen_vind_deriv(mo_occ, mo_coeff)
 
-    dv = []
-    for ia in range(natm):
-        dv.append(dvnuc(ia) + dvind(ia) + dveff(ia))
+    # Check if the mo1 is provided
+    mo1_to_save = eph_obj.chkfile
+    if mo1_to_save is not None:
+        log.debug('mo1 will be saved in %s', mo1_to_save)
 
+    h1, mo1 = eph_obj.solve_mo1(
+        mo_energy, mo_coeff, mo_occ,
+        tmpfile=mo1_to_save,
+        log=log
+    )
+
+    t1 = log.timer('solving CP-SCF equations', *t0)
+    dvnuc = eph_obj.gen_vnuc_deriv(mol_obj)
+    dveff = eph_obj.gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, c1=mo1, h1=h1, log=log)
+
+    dv = [dvnuc(ia) + dveff(ia) for ia in range(mol_obj.natm)]
     dv = numpy.asarray(dv)
     t1 = log.timer('dv', *t0)
 
     return dv.reshape(-1, nao, nao)
 
-def gen_vjk_deriv(mo_occ, mo_coeff, scf_obj=None):
+def make_h1(mo_energy, mo_coeff, mo_occ, tmpfile=None, scf_obj=None, log=None):
     mol = scf_obj.mol
-    aoslice_by_atom = mol.aoslice_by_atom()
     nbas = mol.nbas
 
-    dm0 = numpy.dot(mo_coeff * mo_occ, mo_coeff.T)
+    mask = mo_occ > 0
+    orbo = mo_coeff[:, mask]
+    dm0 = numpy.dot(orbo, orbo.T) * 2.0
+    hcore_deriv = scf_obj.nuc_grad_method().hcore_generator(mol)
 
-    def vjk_deriv(ia):
-        s0, s1, p0, p1 = aoslice_by_atom[ia]
-        script_dms  = ['ji->s2kl', -dm0[:, p0:p1]]
-        script_dms += ['li->s1kj', -dm0[:, p0:p1]]
+    h1 = []
+    if tmpfile is not None:
+        h1 = tmpfile
+
+    aoslices = mol.aoslice_by_atom()
+    for ia, (s0, s1, p0, p1) in enumerate(aoslices):
         shls_slice  = (s0, s1) + (0, nbas) * 3
+        script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
+        script_dms += ['lk->s1ij', -dm0]           # vj2
+        script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
+        script_dms += ['jk->s1il', -dm0]           # vk2
 
         from pyscf.hessian import rhf
-        vj1, vk1 = rhf._get_jk(
+        vj1, vj2, vk1, vk2 = rhf._get_jk(
             mol, 'int2e_ip1', 3, 's2kl',
             script_dms=script_dms,
             shls_slice=shls_slice
-            )
+        )
 
-        vjk1 = vj1 - vk1 * 0.5
-        return vjk1 + vjk1.transpose(0, 2, 1)
+        vhf = vj1 - vk1 * 0.5
+        vhf[:, p0:p1] += vj2 - vk2 * 0.5
+
+
+        if tmpfile is not None:
+            # for solve_mo1
+            lib.chkfile.save(tmpfile, 'scf_f1ao/%d' % ia, vhf + vhf.transpose(0,2,1) + hcore_deriv(ia))
+
+            # for loop_vjk
+            lib.chkfile.save(tmpfile, 'eph_vj1ao/%d' % ia, vj1)
+            lib.chkfile.save(tmpfile, 'eph_vj2ao/%d' % ia, vj2)
+            lib.chkfile.save(tmpfile, 'eph_vk1ao/%d' % ia, vk1)
+            lib.chkfile.save(tmpfile, 'eph_vk2ao/%d' % ia, vk2)
+
+        else:
+            vhf = lib.tag_array(
+                vhf + vhf.transpose(0,2,1) + hcore_deriv(ia),
+                vj1=vj1, vj2=vj2, vk1=vk1, vk2=vk2
+            )
+            h1.append(vhf)
+
+    return h1
+
+def gen_vnuc_deriv(mol):
+    def func(ia):
+        with mol.with_rinv_at_nucleus(ia):
+            vrinv  =  mol.intor('int1e_iprinv', comp=3)
+            vrinv *= -mol.atom_charge(ia)
+        return vrinv + vrinv.transpose(0, 2, 1)
+    return func
+
+def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
+    log = logger.new_logger(None, log)
+    mol = scf_obj.mol
+    nao = mo_coeff.shape[0]
+    natm = mol.natm
+
+    nao, nmo = mo_coeff.shape
+    mask = mo_occ > 0
+    orbo = mo_coeff[:, mask]
+    nocc = orbo.shape[1]
+
+    from pyscf.scf._response_functions import _gen_rhf_response
+    vresp = _gen_rhf_response(mf, mo_coeff, mo_occ, hermi=1)
+
+    def load(ia):
+        assert c1 is not None
+        if isinstance(c1, str):
+            assert os.path.exists(c1), '%s not found' % c1
+            t1 = lib.chkfile.load(c1, 'scf_mo1/%d' % ia)
+            t1 = t1.reshape(-1, nao, nocc)
+
+        else:
+            t1 = c1[ia].reshape(-1, nao, nocc)
+
+        assert h1 is not None
+        if isinstance(h1, str):
+            assert os.path.exists(h1), '%s not found' % h1
+            vj1 = lib.chkfile.load(h1, 'eph_vj1ao/%d' % ia)
+            vk1 = lib.chkfile.load(h1, 'eph_vk1ao/%d' % ia)
+        
+        else:
+            vj1 = h1[ia].vj1
+            vk1 = h1[ia].vk1
+
+        return t1, vj1 - vk1 * 0.5
+
+    def func(ia):
+        t1, vjk1 = load(ia)
+        dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', t1, orbo)
+        dm1 = dm1 + dm1.transpose(0, 2, 1)
+        return vresp(dm1) + vjk1 + vjk1.transpose(0, 2, 1)
     
-    return vjk_deriv
+    return func
 
 class ElectronPhononCouplingBase(lib.StreamObject):
     level_shift = 0.0
@@ -158,49 +223,19 @@ class ElectronPhononCouplingBase(lib.StreamObject):
 
             from pyscf.tools.dump_mat import dump_rec
             dump_rec(log, eph_i, label=mol.ao_labels(), start=0, tol=1e-8)
-
-
-        # for m in range(nao):
-        #     for n in range(nao):
-        #         eph_mn = eph[:, :, m, n]
-
-        #         info = 'electron-phonon coupling for (%2d, %2d)' % (m, n)
-        #         title = " EPH-%s " % self.__class__.__name__
-        #         l = (len(info) - len(title)) // 2 
-        #         l = max(l, 20)
-
-        #         log.info("\n" + "-" * l + title + "-" * l)
-        #         log.info(info)
-        #         for ia in range(natm):
-        #             log.info(
-        #                 "%2d %2s % 12.8f % 12.8f % 12.8f",
-        #                 ia, mol.atom_symbol(ia), *eph_mn[ia, :]
-        #                 )
-        #         log.info("-" * (len(title) + 2 * l))
     
     def _finalize(self):
         assert self.eph is not None
         self._write(self.eph, self.verbose)
     
-    def gen_vnuc_deriv(self):
-        mol = self.mol
-        def vnuc_deriv(ia):
-            with mol.with_rinv_at_nucleus(ia):
-                vrinv  =  mol.intor('int1e_iprinv', comp=3)
-                vrinv *= -mol.atom_charge(ia)
-            return vrinv + vrinv.transpose(0, 2, 1)
-        return vnuc_deriv
     
-    def gen_vind_deriv(self, mo_occ, mo_coeff):
-        raise NotImplementedError
+    def gen_vnuc_deriv(self, mol):
+        return gen_vnuc_deriv(mol)
     
-    def gen_veff_deriv(self, mo_occ, mo_coeff):
+    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
         raise NotImplementedError
     
     def solve_mo1(self, *args, **kwargs):
-        raise NotImplementedError
-    
-    def make_h1(self, *args, **kwargs):
         raise NotImplementedError
     
     def kernel(self, *args, **kwargs):
@@ -215,66 +250,13 @@ class RHF(ElectronPhononCouplingBase):
         ElectronPhononCouplingBase.__init__(self, method)
 
     # TODO: add the arguments
-    def solve_mo1(self, *args, **kwargs):
-        return hessian.rhf.solve_mo1(self.base, *args, **kwargs)
-
-    def make_h1(self, mo_coeff, mo_occ, tmpfile=None, log=None):
-        mol = self.mol
-
-        nao, nmo = mo_coeff.shape
-        mask = mo_occ > 0
-        orbo = mo_coeff[:, mask]
-        dm0 = numpy.dot(orbo, orbo.T) * 2
-        hcore_deriv = self.base.nuc_grad_method().hcore_generator(mol)
-
-        aoslices = mol.aoslice_by_atom()
-        h1ao = [None] * mol.natm
-        for i0, ia in enumerate(atmlst):
-            shl0, shl1, p0, p1 = aoslices[ia]
-            shls_slice = (shl0, shl1) + (0, mol.nbas)*3
-            vj1, vj2, vk1, vk2 = _get_jk(mol, 'int2e_ip1', 3, 's2kl',
-                                        ['ji->s2kl', -dm0[:,p0:p1],  # vj1
-                                        'lk->s1ij', -dm0         ,  # vj2
-                                        'li->s1kj', -dm0[:,p0:p1],  # vk1
-                                        'jk->s1il', -dm0         ], # vk2
-                                        shls_slice=shls_slice)
-            vhf = vj1 - vk1*.5
-            vhf[:,p0:p1] += vj2 - vk2*.5
-            h1 = vhf + vhf.transpose(0,2,1)
-            h1 += hcore_deriv(ia)
-
-            if chkfile is None:
-                h1ao[ia] = h1
-            else:
-                key = 'scf_f1ao/%d' % ia
-                lib.chkfile.save(chkfile, key, h1)
-        if chkfile is None:
-            return h1ao
-        else:
-            return chkfile
-
-    def gen_vind_deriv(self, mo_occ, mo_coeff):
-        nao, nmo = mo_coeff.shape
-        mask = mo_occ > 0
-        orbo = mo_coeff[:, mask]
-        nocc = orbo.shape[1]
-
-        from pyscf.scf._response_functions import _gen_rhf_response
-        vresp = _gen_rhf_response(mf, mo_coeff, mo_occ, hermi=1)
-
-        def vind(ia):
-            mo1 = lib.chkfile.load(self.chkfile, 'scf_mo1/%d' % ia)
-            mo1 = mo1.reshape(-1, nao, nocc)
-
-            dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', mo1, orbo)
-            dm1 = dm1 + dm1.transpose(0, 2, 1)
-            v1 = vresp(dm1)
-            return v1
-        
-        return vind
+    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, tmpfile=None, log=None):
+        h1 = make_h1(mo_energy, mo_coeff, mo_occ, tmpfile=tmpfile, scf_obj=self.base, log=log)
+        c1 = hessian.rhf.solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1, fx=None)[0]
+        return h1, c1
     
-    def gen_veff_deriv(self, mo_occ, mo_coeff):
-        return gen_vjk_deriv(mo_occ, mo_coeff, self.base)
+    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
+        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, c1=c1, h1=h1, log=log)
     
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -305,8 +287,10 @@ if __name__ == '__main__':
 
     eph_obj = RHF(mf)
     eph_obj.verbose = 5
+    # eph_obj.chkfile = None
     eph_sol = eph_obj.kernel()
     chkfile = eph_obj.chkfile
+    assert 1 == 2
 
     from pyscf.eph.rhf import EPH
     from pyscf.eph.rhf import get_eph
