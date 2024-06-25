@@ -15,7 +15,7 @@ KEEP_IMAG_FREQUENCY   = getattr(__config__, 'eph_keep_imaginary_frequency', Fals
 IMAG_CUTOFF_FREQUENCY = getattr(__config__, 'eph_imag_cutoff_frequency', 1e-4)
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                    max_memory=4000, verbose=None):
+                    h1=None, mo1=None, max_memory=4000, verbose=None):
     log = logger.new_logger(eph_obj, verbose)
     t0 = (logger.process_clock(), logger.perf_counter())
 
@@ -34,15 +34,16 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     nao, nmo = mo_coeff.shape
 
     # Check if the mo1 is provided
-    mo1_to_save = eph_obj.chkfile
-    if mo1_to_save is not None:
-        log.debug('mo1 will be saved in %s', mo1_to_save)
+    if h1 is None or mo1 is None:
+        mo1_to_save = eph_obj.chkfile
+        if mo1_to_save is not None:
+            log.debug('mo1 will be saved in %s', mo1_to_save)
 
-    h1, mo1 = eph_obj.solve_mo1(
-        mo_energy, mo_coeff, mo_occ,
-        tmpfile=mo1_to_save,
-        log=log
-    )
+        h1, mo1 = eph_obj.solve_mo1(
+            mo_energy, mo_coeff, mo_occ,
+            tmpfile=mo1_to_save,
+            log=log
+        )
 
     t1 = log.timer('solving CP-SCF equations', *t0)
     dvnuc = eph_obj.gen_vnuc_deriv(mol_obj)
@@ -228,7 +229,6 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         assert self.eph is not None
         self._write(self.eph, self.verbose)
     
-    
     def gen_vnuc_deriv(self, mol):
         return gen_vnuc_deriv(mol)
     
@@ -239,6 +239,16 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         raise NotImplementedError
     
     def kernel(self, *args, **kwargs):
+        mo1_to_save = self.chkfile
+        if mo1_to_save is not None:
+            self.debug('mo1 will be saved in %s', mo1_to_save)
+
+        h1, mo1 = self.solve_mo1(
+            mo_energy, mo_coeff, mo_occ,
+            tmpfile=mo1_to_save,
+            log=log
+        )
+
         dv = kernel(self, *args, **kwargs)
         # self.eph = eph
         # self._finalize()
@@ -263,16 +273,15 @@ if __name__ == '__main__':
 
     mol = gto.M()
     mol.atom = '''
-    O   -0.0171307   -0.0257390    1.7511303
-    H    0.0107978    0.8956887    1.3895372
-    H    0.6941101   -0.5072723    1.2583225
-    O    0.0172522   -0.0257742   -1.7509868
-    H   -0.0108795    0.8957342   -1.3896115
-    H   -0.6940451   -0.5072835   -1.2582398
+    O       1.4877130648    -0.0141244699     0.1077221832
+    H       1.3603537501     0.8074302059    -0.4276645268
+    H       1.2382957299    -0.6943961257    -0.5650025559
+    O      -1.4874109631    -0.0141053847    -0.1078225865
+    H      -1.3614968377     0.8073033485     0.4281140554
+    H      -1.2395694562    -0.6944985917     0.5653562536
     '''
-    mol.unit  = 'bohr'
     mol.basis = 'sto3g'
-    mol.verbose = 0
+    mol.verbose = 5
     mol.build()
 
     natm = mol.natm
@@ -285,22 +294,32 @@ if __name__ == '__main__':
     # grad = mf.nuc_grad_method().kernel()
     # assert numpy.allclose(grad, 0.0, atol=1e-4)
 
-    eph_obj = RHF(mf)
-    eph_obj.verbose = 5
-    # eph_obj.chkfile = None
-    eph_sol = eph_obj.kernel()
-    chkfile = eph_obj.chkfile
-    assert 1 == 2
+    # eph_obj = RHF(mf)
+    # eph_obj.verbose = 5
+    # # eph_obj.chkfile = None
+    # eph_sol = eph_obj.kernel()
+    # chkfile = eph_obj.chkfile
+    # assert 1 == 2
 
-    from pyscf.eph.rhf import EPH
-    from pyscf.eph.rhf import get_eph
-    def func(*args):
-        print("hack _freq_mass_weighted_vec")
-        print(args)
-        return numpy.eye(natm * 3)
-    pyscf.eph.rhf._freq_mass_weighted_vec = func
-    eph_obj = EPH(mf)
-    eph_ref = get_eph(eph_obj, chkfile, omega=None, vec=None, mo_rep=False)
+    # from pyscf.eph.rhf import EPH
+    # from pyscf.eph.rhf import get_eph
+    # def func(*args):
+    #     print("hack _freq_mass_weighted_vec")
+    #     print(args)
+    #     return numpy.eye(natm * 3)
+    # pyscf.eph.rhf._freq_mass_weighted_vec = func
+    # eph_obj = EPH(mf)
+    # eph_ref = get_eph(eph_obj, chkfile, omega=None, vec=None, mo_rep=False)
 
-    err = numpy.linalg.norm(eph_sol - eph_ref)
-    print('eph error %6.4e' % err)
+    # err = numpy.linalg.norm(eph_sol - eph_ref)
+    # print('eph error %6.4e' % err)
+
+    hess_obj = hessian.RHF(mf)
+    hess_obj.verbose = 5
+    hess = hess_obj.kernel()
+
+    from pyscf.hessian.thermo import harmonic_analysis
+    mol.verbose = 5
+    res = harmonic_analysis(mol, hess)
+
+    print(res)
