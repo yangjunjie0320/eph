@@ -54,8 +54,6 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     assert isinstance(mo1, dict)
 
     nao, nmo = mo_coeff.shape
-    orbo = mo_coeff[:, mo_occ > 0]
-
     dvnuc = eph_obj.gen_vnuc_deriv()
     dveff = eph_obj.gen_veff_deriv(mo_occ, mo_coeff)
     dvind = eph_obj.gen_vind_deriv(mo_occ, mo_coeff)
@@ -70,22 +68,21 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     return dv.reshape(-1, nao, nao)
 
 def gen_vjk_deriv(mo_occ, mo_coeff, scf_obj=None):
-    aoslice_by_atom = scf_obj.mol.aoslice_by_atom()
-    nbas = scf_obj.mol.nbas
+    mol = scf_obj.mol
+    aoslice_by_atom = mol.aoslice_by_atom()
+    nbas = mol.nbas
 
-    orbo = mo_coeff[:, mo_occ > 0]
-    dm = numpy.dot(orbo, orbo.T) * 2
+    dm0 = numpy.dot(mo_coeff * mo_occ, mo_coeff.T)
 
     def vjk_deriv(ia):
         s0, s1, p0, p1 = aoslice_by_atom[ia]
-
-
-        script_dms = ['ji->s2kl', -dm[:, p0:p1], 'li->s1kj', -dm[:, p0:p1]]
-        shls_slice = (s0, s1) + (0, nbas) * 3
+        script_dms  = ['ji->s2kl', -dm0[:, p0:p1]]
+        script_dms += ['li->s1kj', -dm0[:, p0:p1]]
+        shls_slice  = (s0, s1) + (0, nbas) * 3
 
         from pyscf.hessian import rhf
         vj1, vk1 = rhf._get_jk(
-            scf_obj.mol, 'int2e_ip1', 3, 's2kl',
+            mol, 'int2e_ip1', 3, 's2kl',
             script_dms=script_dms,
             shls_slice=shls_slice
             )
@@ -147,25 +144,39 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         log = logger.new_logger(mol, verbose)
         natm = mol.natm
         nao = mol.nao_nr()
-        eph = eph.reshape(natm, 3, nao, nao)
+        eph = eph.reshape(-1, nao, nao)
+        nmode = eph.shape[0]
 
-        for m in range(nao):
-            for n in range(nao):
-                eph_mn = eph[:, :, m, n]
+        for imode in range(nmode):
+            eph_i = eph[imode]
+            info = 'electron-phonon coupling for mode %d' % imode
+            title = " EPH-%s " % self.__class__.__name__
+            l = max(20, (len(info) - len(title)) // 2)
 
-                info = 'electron-phonon coupling for (%2d, %2d)' % (m, n)
-                title = " EPH-%s " % self.__class__.__name__
-                l = (len(info) - len(title)) // 2 
-                l = max(l, 20)
+            log.info("\n" + "-" * l + title + "-" * l)
+            log.info(info)
 
-                log.info("\n" + "-" * l + title + "-" * l)
-                log.info(info)
-                for ia in range(natm):
-                    log.info(
-                        "%2d %2s % 12.8f % 12.8f % 12.8f",
-                        ia, mol.atom_symbol(ia), *eph_mn[ia, :]
-                        )
-                log.info("-" * (len(title) + 2 * l))
+            from pyscf.tools.dump_mat import dump_rec
+            dump_rec(log, eph_i, label=mol.ao_labels(), start=0, tol=1e-8)
+
+
+        # for m in range(nao):
+        #     for n in range(nao):
+        #         eph_mn = eph[:, :, m, n]
+
+        #         info = 'electron-phonon coupling for (%2d, %2d)' % (m, n)
+        #         title = " EPH-%s " % self.__class__.__name__
+        #         l = (len(info) - len(title)) // 2 
+        #         l = max(l, 20)
+
+        #         log.info("\n" + "-" * l + title + "-" * l)
+        #         log.info(info)
+        #         for ia in range(natm):
+        #             log.info(
+        #                 "%2d %2s % 12.8f % 12.8f % 12.8f",
+        #                 ia, mol.atom_symbol(ia), *eph_mn[ia, :]
+        #                 )
+        #         log.info("-" * (len(title) + 2 * l))
     
     def _finalize(self):
         assert self.eph is not None
@@ -173,10 +184,10 @@ class ElectronPhononCouplingBase(lib.StreamObject):
     
     def gen_vnuc_deriv(self):
         mol = self.mol
-        def vnuc_deriv(atm_id):
-            with mol.with_rinv_at_nucleus(atm_id):
-                vrinv  = mol.intor('int1e_iprinv', comp=3)
-                vrinv *= -mol.atom_charge(atm_id)
+        def vnuc_deriv(ia):
+            with mol.with_rinv_at_nucleus(ia):
+                vrinv  =  mol.intor('int1e_iprinv', comp=3)
+                vrinv *= -mol.atom_charge(ia)
             return vrinv + vrinv.transpose(0, 2, 1)
         return vnuc_deriv
     
@@ -193,11 +204,10 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         raise NotImplementedError
     
     def kernel(self, *args, **kwargs):
-        eph = kernel(self, *args, **kwargs)
-        self.eph = eph
-
-        self._finalize()
-        return eph
+        dv = kernel(self, *args, **kwargs)
+        # self.eph = eph
+        # self._finalize()
+        return dv
 
 class RHF(ElectronPhononCouplingBase):
     def __init__(self, method):
