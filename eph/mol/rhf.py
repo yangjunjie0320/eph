@@ -14,48 +14,44 @@ CUTOFF_FREQUENCY      = getattr(__config__, 'eph_cutoff_frequency', 80)  # 80 cm
 KEEP_IMAG_FREQUENCY   = getattr(__config__, 'eph_keep_imaginary_frequency', False)
 IMAG_CUTOFF_FREQUENCY = getattr(__config__, 'eph_imag_cutoff_frequency', 1e-4)
 
-def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                    h1=None, mo1=None, max_memory=4000, verbose=None):
+def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
+           h1ao=None, mo1=None, max_memory=4000, verbose=None):
     log = logger.new_logger(eph_obj, verbose)
     t0 = (logger.process_clock(), logger.perf_counter())
 
     mol_obj = eph_obj.mol
     scf_obj = eph_obj.base
 
-    if mo_energy is None:
-        mo_energy = scf_obj.mo_energy
-    
-    if mo_coeff is None:
-        mo_coeff = scf_obj.mo_coeff
-    
-    if mo_occ is None:
-        mo_occ = scf_obj.mo_occ
-
+    if mo_energy is None: mo_energy = scf_obj.mo_energy
+    if mo_occ    is None: mo_occ    = scf_obj.mo_occ
+    if mo_coeff  is None: mo_coeff  = scf_obj.mo_coeff
     nao, nmo = mo_coeff.shape
-
+          
     # Check if the mo1 is provided
-    if h1 is None or mo1 is None:
+    if h1ao is None or mo1 is None:
         mo1_to_save = eph_obj.chkfile
         if mo1_to_save is not None:
             log.debug('mo1 will be saved in %s', mo1_to_save)
 
-        h1, mo1 = eph_obj.solve_mo1(
-            mo_energy, mo_coeff, mo_occ,
-            tmpfile=mo1_to_save,
-            log=log
+        h1ao, mo1, mo_e1 = eph_obj.solve_mo1(
+            mo_energy, mo_coeff, mo_occ, log=log,
+            tmpfile=mo1_to_save
         )
+        t1 = log.timer('solving CP-SCF equations', *t0)
 
-    t1 = log.timer('solving CP-SCF equations', *t0)
-    dvnuc = eph_obj.gen_vnuc_deriv(mol_obj)
-    dveff = eph_obj.gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, c1=mo1, h1=h1, log=log)
-
-    dv = [dvnuc(ia) + dveff(ia) for ia in range(mol_obj.natm)]
-    dv = numpy.asarray(dv)
-    t1 = log.timer('dv', *t0)
-
+    vnuc_deriv = eph_obj.gen_vnuc_deriv(mol_obj)
+    veff_deriv = eph_obj.gen_veff_deriv(
+        mo_occ, mo_coeff, scf_obj=scf_obj,
+        mo1=mo1, h1ao=h1ao, log=log
+        )
+    
+    natm = mol_obj.natm
+    dv = numpy.zeros((natm, 3, nao, nao))
+    for ia in range(natm):
+        dv[ia] = vnuc_deriv(ia) + veff_deriv(ia)
     return dv.reshape(-1, nao, nao)
 
-def make_h1(mo_energy, mo_coeff, mo_occ, tmpfile=None, scf_obj=None, log=None):
+def make_h1(mo_energy=None, mo_coeff=None, mo_occ=None, tmpfile=None, scf_obj=None, log=None):
     mol = scf_obj.mol
     nbas = mol.nbas
 
@@ -114,7 +110,7 @@ def gen_vnuc_deriv(mol):
         return vrinv + vrinv.transpose(0, 2, 1)
     return func
 
-def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
+def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
     log = logger.new_logger(None, log)
     mol = scf_obj.mol
     nao = mo_coeff.shape[0]
@@ -129,24 +125,24 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
     vresp = _gen_rhf_response(mf, mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
-        assert c1 is not None
-        if isinstance(c1, str):
-            assert os.path.exists(c1), '%s not found' % c1
-            t1 = lib.chkfile.load(c1, 'scf_mo1/%d' % ia)
+        assert mo1 is not None
+        if isinstance(mo1, str):
+            assert os.path.exists(mo1), '%s not found' % mo1
+            t1 = lib.chkfile.load(mo1, 'scf_mo1/%d' % ia)
             t1 = t1.reshape(-1, nao, nocc)
 
         else:
-            t1 = c1[ia].reshape(-1, nao, nocc)
+            t1 = mo1[ia].reshape(-1, nao, nocc)
 
-        assert h1 is not None
-        if isinstance(h1, str):
-            assert os.path.exists(h1), '%s not found' % h1
-            vj1 = lib.chkfile.load(h1, 'eph_vj1ao/%d' % ia)
-            vk1 = lib.chkfile.load(h1, 'eph_vk1ao/%d' % ia)
+        assert h1ao is not None
+        if isinstance(h1ao, str):
+            assert os.path.exists(h1ao), '%s not found' % h1ao
+            vj1 = lib.chkfile.load(h1ao, 'eph_vj1ao/%d' % ia)
+            vk1 = lib.chkfile.load(h1ao, 'eph_vk1ao/%d' % ia)
         
         else:
-            vj1 = h1[ia].vj1
-            vk1 = h1[ia].vk1
+            vj1 = h1ao[ia].vj1
+            vk1 = h1ao[ia].vk1
 
         return t1, vj1 - vk1 * 0.5
 
@@ -195,78 +191,76 @@ class ElectronPhononCouplingBase(lib.StreamObject):
             )
         return self
     
-    def _write(self, eph, verbose=None):
-        '''Format output of electron-phonon coupling tensor.
-
-        Args:
-            mol : Mole
-                Molecule object.
-            eph : 3-d array
-                Electron-phonon coupling tensor, the shape is (natm * 3, norb, norb)
-            atmlst : list
-                List of atom indices.
-        '''
-
-        log = logger.new_logger(mol, verbose)
-        natm = mol.natm
-        nao = mol.nao_nr()
-        eph = eph.reshape(-1, nao, nao)
-        nmode = eph.shape[0]
-
-        for imode in range(nmode):
-            eph_i = eph[imode]
-            info = 'electron-phonon coupling for mode %d' % imode
-            title = " EPH-%s " % self.__class__.__name__
-            l = max(20, (len(info) - len(title)) // 2)
-
-            log.info("\n" + "-" * l + title + "-" * l)
-            log.info(info)
-
-            from pyscf.tools.dump_mat import dump_rec
-            dump_rec(log, eph_i, label=mol.ao_labels(), start=0, tol=1e-8)
-    
-    def _finalize(self):
-        assert self.eph is not None
-        self._write(self.eph, self.verbose)
-    
-    def gen_vnuc_deriv(self, mol):
+    def gen_vnuc_deriv(self, mol=None):
+        if mol is None: mol = self.mol
         return gen_vnuc_deriv(mol)
     
-    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
+    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
         raise NotImplementedError
     
     def solve_mo1(self, *args, **kwargs):
         raise NotImplementedError
     
-    def kernel(self, *args, **kwargs):
+    def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None):
+        if mo_energy is None: mo_energy = self.base.mo_energy
+        if mo_coeff is None: mo_coeff = self.base.mo_coeff
+        if mo_occ is None: mo_occ = self.base.mo_occ
+
+        log = logger.new_logger(self, self.verbose)
+
+        t0 = (logger.process_clock(), logger.perf_counter())
         mo1_to_save = self.chkfile
         if mo1_to_save is not None:
-            self.debug('mo1 will be saved in %s', mo1_to_save)
+            log.debug('mo1 will be saved in %s', mo1_to_save)
 
-        h1, mo1 = self.solve_mo1(
+        h1ao, mo1, mo_e1 = self.solve_mo1(
             mo_energy, mo_coeff, mo_occ,
-            tmpfile=mo1_to_save,
-            log=log
+            tmpfile=mo1_to_save, log=log
+        )
+        t1 = log.timer('solving CP-SCF equations', *t0)
+
+        dv = kernel(
+            self, mo_energy=mo_energy, 
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            h1ao=h1ao, mo1=mo1, verbose=log,
         )
 
-        dv = kernel(self, *args, **kwargs)
-        # self.eph = eph
-        # self._finalize()
-        return dv
+        hess_obj = self.base.Hessian()
+        hess = hess_obj.hess_elec(
+            mo_energy, mo_coeff, mo_occ,
+            mo1=mo1, mo_e1=mo_e1, h1ao=h1ao,
+            max_memory=self.max_memory, verbose=log
+        )
+
+        hess = hess + hess_obj.hess_nuc(self.mol)
+        
+        from pyscf.hessian.thermo import harmonic_analysis
+        res = harmonic_analysis(self.mol, hess, exclude_trans=False, exclude_rot=False)
+        freq = res['freq_au']
+        mode = res['norm_mode']
+        nmode = freq.size
+
+        freq_au = freq
+        freq_cm = res['freq_cm']
+        
+        ind = []
+        for imode in range(nmode):
+            if freq_cm > CUTOFF_FREQUENCY:
+                ind.append(imode)
+
 
 class RHF(ElectronPhononCouplingBase):
     def __init__(self, method):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
 
-    # TODO: add the arguments
     def solve_mo1(self, mo_energy, mo_coeff, mo_occ, tmpfile=None, log=None):
-        h1 = make_h1(mo_energy, mo_coeff, mo_occ, tmpfile=tmpfile, scf_obj=self.base, log=log)
-        c1 = hessian.rhf.solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1, fx=None)[0]
-        return h1, c1
+        h1ao = make_h1(mo_energy, mo_coeff, mo_occ, tmpfile=tmpfile, scf_obj=self.base, log=log)
+        mo1, mo_e1 = hessian.rhf.solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao, fx=None)
+        return h1ao, mo1, mo_e1
     
-    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, c1=None, h1=None, log=None):
-        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, c1=c1, h1=h1, log=log)
+    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
+        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=log)
     
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -294,10 +288,10 @@ if __name__ == '__main__':
     # grad = mf.nuc_grad_method().kernel()
     # assert numpy.allclose(grad, 0.0, atol=1e-4)
 
-    # eph_obj = RHF(mf)
-    # eph_obj.verbose = 5
-    # # eph_obj.chkfile = None
-    # eph_sol = eph_obj.kernel()
+    eph_obj = RHF(mf)
+    eph_obj.verbose = 5
+    eph_obj.chkfile = None
+    eph_sol = eph_obj.kernel()
     # chkfile = eph_obj.chkfile
     # assert 1 == 2
 
@@ -316,10 +310,11 @@ if __name__ == '__main__':
 
     hess_obj = hessian.RHF(mf)
     hess_obj.verbose = 5
+
     hess = hess_obj.kernel()
 
-    from pyscf.hessian.thermo import harmonic_analysis
-    mol.verbose = 5
-    res = harmonic_analysis(mol, hess)
+    # from pyscf.hessian.thermo import harmonic_analysis
+    # mol.verbose = 5
+    # res = harmonic_analysis(mol, hess)
 
-    print(res)
+    # print(res)
