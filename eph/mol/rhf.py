@@ -154,8 +154,24 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
     
     return func
 
-def electron_phonon_coupling(mol, dv, hess, mo_repr=False):
-    pass
+def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None, verbose=None):
+    assert hess  is not None
+    assert dv_ao is not None
+
+    log = logger.new_logger(mol, verbose)
+    natm = mol.natm
+    nao = mol.nao_nr()
+
+    assert hess.shape == (natm, natm, 3, 3)
+    assert dv_ao.shape == (natm, 3, nao, nao)
+
+    from pyscf.hessian.thermo import harmonic_analysis
+    nm = harmonic_analysis(
+        mol, hess, exclude_rot=False, exclude_trans=False, 
+        mass=mass, imaginary_freq=True
+        )
+
+    print(nm)
 
 class ElectronPhononCouplingBase(lib.StreamObject):
     level_shift = 0.0
@@ -209,26 +225,13 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         if mo_coeff is None: mo_coeff = self.base.mo_coeff
         if mo_occ is None: mo_occ = self.base.mo_occ
 
-        log = logger.new_logger(self, self.verbose)
-
-        t0 = (logger.process_clock(), logger.perf_counter())
-        mo1_to_save = self.chkfile
-        if mo1_to_save is not None:
-            log.debug('mo1 will be saved in %s', mo1_to_save)
-
-        h1ao, mo1, mo_e1 = self.solve_mo1(
-            mo_energy, mo_coeff, mo_occ,
-            tmpfile=mo1_to_save, log=log
-        )
-        t1 = log.timer('solving CP-SCF equations', *t0)
-
         dv = kernel(
             self, mo_energy=mo_energy,
             mo_coeff=mo_coeff, mo_occ=mo_occ,
-            h1ao=h1ao, mo1=mo1, verbose=log,
+            h1ao=None, mo1=None
         )
-    
 
+        return dv
 
 class RHF(ElectronPhononCouplingBase):
     def __init__(self, method):
