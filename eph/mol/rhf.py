@@ -65,7 +65,7 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
     mode = nm["norm_mode"]
     nmode = len(freq)
 
-    freq_au = nm["freq_au"]
+    freq_au = nm["freq_au"] / MP_ME ** 0.5
     freq_wn = nm["freq_wavenumber"]
 
     assert mode.shape == (nmode, natm, 3)
