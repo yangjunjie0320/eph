@@ -154,6 +154,9 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
     
     return func
 
+def electron_phonon_coupling(mol, dv, hess, mo_repr=False):
+    pass
+
 class ElectronPhononCouplingBase(lib.StreamObject):
     level_shift = 0.0
     max_cycle = 50
@@ -220,33 +223,11 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         t1 = log.timer('solving CP-SCF equations', *t0)
 
         dv = kernel(
-            self, mo_energy=mo_energy, 
+            self, mo_energy=mo_energy,
             mo_coeff=mo_coeff, mo_occ=mo_occ,
             h1ao=h1ao, mo1=mo1, verbose=log,
         )
-
-        hess_obj = self.base.Hessian()
-        hess = hess_obj.hess_elec(
-            mo_energy, mo_coeff, mo_occ,
-            mo1=mo1, mo_e1=mo_e1, h1ao=h1ao,
-            max_memory=self.max_memory, verbose=log
-        )
-
-        hess = hess + hess_obj.hess_nuc(self.mol)
-        
-        from pyscf.hessian.thermo import harmonic_analysis
-        res = harmonic_analysis(self.mol, hess, exclude_trans=False, exclude_rot=False)
-        freq = res['freq_au']
-        mode = res['norm_mode']
-        nmode = freq.size
-
-        freq_au = freq
-        freq_cm = res['freq_cm']
-        
-        ind = []
-        for imode in range(nmode):
-            if freq_cm > CUTOFF_FREQUENCY:
-                ind.append(imode)
+    
 
 
 class RHF(ElectronPhononCouplingBase):
