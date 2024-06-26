@@ -4,6 +4,7 @@ import pyscf
 from pyscf import lib, scf
 import pyscf.eph
 from pyscf.gto.mole import is_au
+import pyscf.hessian
 from pyscf.lib import logger
 from pyscf.scf import hf, _vhf
 from pyscf import hessian
@@ -12,10 +13,97 @@ from pyscf.data.nist import HARTREE2WAVENUMBER, MP_ME
 from pyscf import __config__ 
 CUTOFF_FREQUENCY      = getattr(__config__, 'eph_cutoff_frequency', 80)  # 80 cm-1
 KEEP_IMAG_FREQUENCY   = getattr(__config__, 'eph_keep_imaginary_frequency', False)
-IMAG_CUTOFF_FREQUENCY = getattr(__config__, 'eph_imag_cutoff_frequency', 1e-4)
+IMAG_CUTOFF_FREQUENCY = getattr(__config__, 'eph_imag_cutoff_frequency', 1e-4) # 1e-4 cm-1
+
+
+def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None, 
+                             exclude_rot=True, exclude_trans=True, 
+                             verbose=None, 
+                             cutoff_frequency=CUTOFF_FREQUENCY, keep_imag_freq=KEEP_IMAG_FREQUENCY,
+                             imag_cutoff_frequency=IMAG_CUTOFF_FREQUENCY):
+    """
+    Perform the harmonic analysis and compute the electron-phonon coupling
+    from the hessian matrix and the derivative of effective potential.
+
+    Args:
+        mol : Mole
+            Molecular object.
+        hess : 4D array (natm, natm, 3, 3)
+            Hessian matrix.
+        dv_ao : 4D array (natm, 3, nao, nao)
+            Derivative of effective potential.
+        mass : 1D array
+            Atomic masses.
+        verbose : int
+            Print level.
+
+    Returns:
+        res : dict
+            Dictionary containing the results of the harmonic analysis
+            and the electron-phonon coupling for each mode.
+    """
+    if mass is None:
+        mass = mol.atom_mass_list(isotope_avg=True)
+
+    assert hess  is not None
+    assert dv_ao is not None
+
+    log = logger.new_logger(mol, verbose)
+    natm = mol.natm
+    nao = mol.nao_nr()
+
+    assert hess.shape == (natm, natm, 3, 3)
+    assert dv_ao.shape == (natm, 3, nao, nao)
+
+    from pyscf.hessian.thermo import harmonic_analysis
+    nm = harmonic_analysis(
+        mol, hess, exclude_rot=exclude_rot, exclude_trans=exclude_trans, 
+        mass=mass, imaginary_freq=True
+        )
+    
+    freq = nm["freq_au"] / MP_ME ** 0.5
+    mode = nm["norm_mode"]
+    nmode = len(freq)
+
+    freq_au = nm["freq_au"]
+    freq_wn = nm["freq_wavenumber"]
+
+    assert mode.shape == (nmode, natm, 3)
+    assert freq.shape == (nmode, )
+
+    if not keep_imag_freq:
+        freq_au = freq_au.real
+        freq_wn = freq_wn.real
+        mask = freq_wn.real > cutoff_frequency
+    else:
+        mask = (freq_wn.real > cutoff_frequency) | (freq_wn.imag > imag_cutoff_frequency)
+
+    for imode in range(nmode):
+        f = "% 6.4f" % freq_wn[imode].real
+        if abs(freq_wn[imode].imag) > imag_cutoff_frequency:
+            f += " + " if freq_wn[imode].imag > 0 else " - "
+            f += "%6.4fi" % abs(freq_wn[imode].imag)
+
+        if not mask[imode]:
+            log.info('mode %3d: %18s cm^-1 (discard)', imode, f)
+        else:
+            log.info('mode %3d: %18s cm^-1', imode, f)
+
+    freq_au = freq_au[mask]
+    freq_wn = freq_wn[mask]
+    mode = mode[mask]
+
+    mask = numpy.argsort(freq_wn)
+    freq_au = freq_au[mask]
+    freq_wn = freq_wn[mask]
+    mode = mode[mask]
+
+    eph = numpy.einsum("axmn,Iax,I->Imn", dv_ao, mode, 1.0 / numpy.sqrt(2 * freq_au))
+    return freq_au, eph
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
-           h1ao=None, mo1=None, max_memory=4000, verbose=None):
+           h1ao=None, mo1=None, atmlst=None,
+           max_memory=4000, verbose=None):
     log = logger.new_logger(eph_obj, verbose)
     t0 = (logger.process_clock(), logger.perf_counter())
 
@@ -25,19 +113,17 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     if mo_energy is None: mo_energy = scf_obj.mo_energy
     if mo_occ    is None: mo_occ    = scf_obj.mo_occ
     if mo_coeff  is None: mo_coeff  = scf_obj.mo_coeff
+    if atmlst is None:    atmlst    = range(mol_obj.natm)
     nao, nmo = mo_coeff.shape
-          
-    # Check if the mo1 is provided
-    if h1ao is None or mo1 is None:
-        mo1_to_save = eph_obj.chkfile
-        if mo1_to_save is not None:
-            log.debug('mo1 will be saved in %s', mo1_to_save)
 
-        h1ao, mo1, mo_e1 = eph_obj.solve_mo1(
-            mo_energy, mo_coeff, mo_occ, log=log,
-            tmpfile=mo1_to_save
-        )
-        t1 = log.timer('solving CP-SCF equations', *t0)
+    if h1ao is None:
+        h1ao = eph_obj.make_h1(mo_coeff, mo_occ, eph_obj.chkfile, atmlst, log)
+        t1 = log.timer_debug1('making H1', *t0)
+
+    if mo1 is None:
+        mo1, mo_e1 = eph_obj.solve_mo1(mo_energy, mo_coeff, mo_occ, h1ao,
+                                       None, atmlst, max_memory, log)
+        t1 = log.timer_debug1('solving MO1', *t1)
 
     vnuc_deriv = eph_obj.gen_vnuc_deriv(mol_obj)
     veff_deriv = eph_obj.gen_veff_deriv(
@@ -45,27 +131,28 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
         mo1=mo1, h1ao=h1ao, log=log
         )
     
-    natm = mol_obj.natm
-    dv = numpy.zeros((natm, 3, nao, nao))
-    for ia in range(natm):
-        dv[ia] = vnuc_deriv(ia) + veff_deriv(ia)
-    return dv.reshape(-1, nao, nao)
+    dv = numpy.zeros((len(atmlst), 3, nao, nao))
+    for i0, ia in enumerate(atmlst):
+        dv[i0] = vnuc_deriv(ia) + veff_deriv(ia)
 
-def make_h1(mo_energy=None, mo_coeff=None, mo_occ=None, tmpfile=None, scf_obj=None, log=None):
-    mol = scf_obj.mol
-    nbas = mol.nbas
+    return dv
+
+def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
+    mol = eph_obj.mol
+    scf_obj = eph_obj.base
 
     mask = mo_occ > 0
     orbo = mo_coeff[:, mask]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
-    hcore_deriv = scf_obj.nuc_grad_method().hcore_generator(mol)
 
-    h1 = []
-    if tmpfile is not None:
-        h1 = tmpfile
-
+    nbas = mol.nbas
     aoslices = mol.aoslice_by_atom()
-    for ia, (s0, s1, p0, p1) in enumerate(aoslices):
+    h1ao = [None] * mol.natm
+
+    hcore_deriv = scf_obj.nuc_grad_method().hcore_generator(mol)
+    for i0, ia in enumerate(atmlst):
+        s0, s1, p0, p1 = aoslices[ia]
+
         shls_slice  = (s0, s1) + (0, nbas) * 3
         script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
         script_dms += ['lk->s1ij', -dm0]           # vj2
@@ -82,25 +169,27 @@ def make_h1(mo_energy=None, mo_coeff=None, mo_occ=None, tmpfile=None, scf_obj=No
         vhf = vj1 - vk1 * 0.5
         vhf[:, p0:p1] += vj2 - vk2 * 0.5
 
-
-        if tmpfile is not None:
-            # for solve_mo1
-            lib.chkfile.save(tmpfile, 'scf_f1ao/%d' % ia, vhf + vhf.transpose(0,2,1) + hcore_deriv(ia))
-
-            # for loop_vjk
-            lib.chkfile.save(tmpfile, 'eph_vj1ao/%d' % ia, vj1)
-            lib.chkfile.save(tmpfile, 'eph_vj2ao/%d' % ia, vj2)
-            lib.chkfile.save(tmpfile, 'eph_vk1ao/%d' % ia, vk1)
-            lib.chkfile.save(tmpfile, 'eph_vk2ao/%d' % ia, vk2)
-
-        else:
-            vhf = lib.tag_array(
-                vhf + vhf.transpose(0,2,1) + hcore_deriv(ia),
+        if chkfile is None:
+            h1ao[ia] = lib.tag_array(
+                vhf + vhf.transpose(0, 2, 1) + hcore_deriv(ia),
                 vj1=vj1, vj2=vj2, vk1=vk1, vk2=vk2
             )
-            h1.append(vhf)
 
-    return h1
+        else:
+            # for solve_mo1
+            lib.chkfile.save(chkfile, 'scf_f1ao/%d' % ia, vhf + vhf.transpose(0,2,1) + hcore_deriv(ia))
+
+            # for loop_vjk
+            lib.chkfile.save(chkfile, 'eph_vj1ao/%d' % ia, vj1)
+            lib.chkfile.save(chkfile, 'eph_vj2ao/%d' % ia, vj2)
+            lib.chkfile.save(chkfile, 'eph_vk1ao/%d' % ia, vk1)
+            lib.chkfile.save(chkfile, 'eph_vk2ao/%d' % ia, vk2)
+
+    if chkfile is None:
+        return h1ao
+    
+    else:
+        return chkfile
 
 def gen_vnuc_deriv(mol):
     def func(ia):
@@ -144,6 +233,10 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
             vj1 = h1ao[ia].vj1
             vk1 = h1ao[ia].vk1
 
+        assert t1 is not None
+        assert vj1 is not None
+        assert vk1 is not None
+
         return t1, vj1 - vk1 * 0.5
 
     def func(ia):
@@ -153,25 +246,6 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
         return vresp(dm1) + vjk1 + vjk1.transpose(0, 2, 1)
     
     return func
-
-def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None, verbose=None):
-    assert hess  is not None
-    assert dv_ao is not None
-
-    log = logger.new_logger(mol, verbose)
-    natm = mol.natm
-    nao = mol.nao_nr()
-
-    assert hess.shape == (natm, natm, 3, 3)
-    assert dv_ao.shape == (natm, 3, nao, nao)
-
-    from pyscf.hessian.thermo import harmonic_analysis
-    nm = harmonic_analysis(
-        mol, hess, exclude_rot=False, exclude_trans=False, 
-        mass=mass, imaginary_freq=True
-        )
-
-    print(nm)
 
 class ElectronPhononCouplingBase(lib.StreamObject):
     level_shift = 0.0
@@ -184,6 +258,7 @@ class ElectronPhononCouplingBase(lib.StreamObject):
 
         self.mol = method.mol
         self.base = method
+        self.atmlst = None
 
         self.max_memory = method.max_memory
         self.unit = 'au'
@@ -217,88 +292,84 @@ class ElectronPhononCouplingBase(lib.StreamObject):
     def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
         raise NotImplementedError
     
-    def solve_mo1(self, *args, **kwargs):
+    def make_h1(self, mo_coeff, mo_occ, tmpfile=None, atmlst=None, log=None):
         raise NotImplementedError
     
-    def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None):
+    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+                  fx=None, atmlst=None, max_memory=4000, verbose=None):
+        from pyscf.hessian.rhf import solve_mo1
+        return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+                         fx, atmlst, max_memory, verbose,
+                         max_cycle=self.max_cycle, level_shift=self.level_shift)
+    
+    def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
         if mo_coeff is None: mo_coeff = self.base.mo_coeff
         if mo_occ is None: mo_occ = self.base.mo_occ
 
+        self.dump_flags(verbose=self.verbose)
         dv = kernel(
             self, mo_energy=mo_energy,
             mo_coeff=mo_coeff, mo_occ=mo_occ,
-            h1ao=None, mo1=None
+            atmlst=atmlst, h1ao=None, mo1=None,
         )
 
         return dv
 
-class RHF(ElectronPhononCouplingBase):
+class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
-
-    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, tmpfile=None, log=None):
-        h1ao = make_h1(mo_energy, mo_coeff, mo_occ, tmpfile=tmpfile, scf_obj=self.base, log=log)
-        mo1, mo_e1 = hessian.rhf.solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao, fx=None)
-        return h1ao, mo1, mo_e1
     
     def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
         return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=log)
+    
+    make_h1 = make_h1
     
 if __name__ == '__main__':
     from pyscf import gto, scf
 
     mol = gto.M()
     mol.atom = '''
-    O       1.4877130648    -0.0141244699     0.1077221832
-    H       1.3603537501     0.8074302059    -0.4276645268
-    H       1.2382957299    -0.6943961257    -0.5650025559
-    O      -1.4874109631    -0.0141053847    -0.1078225865
-    H      -1.3614968377     0.8073033485     0.4281140554
-    H      -1.2395694562    -0.6944985917     0.5653562536
+    O       0.0000000000     0.0000000000     0.1146878262
+    H      -0.7540663886    -0.0000000000    -0.4587203947
+    H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = 'sto3g'
-    mol.verbose = 5
+    mol.basis = '631g*'
+    mol.verbose = 0
+    mol.symmetry = False
+    mol.cart = True
     mol.build()
-
-    natm = mol.natm
 
     mf = scf.RHF(mol)
     mf.conv_tol = 1e-10
     mf.conv_tol_grad = 1e-10
     mf.kernel()
 
-    # grad = mf.nuc_grad_method().kernel()
-    # assert numpy.allclose(grad, 0.0, atol=1e-4)
+    grad = mf.nuc_grad_method().kernel()
+    assert numpy.allclose(grad, 0.0, atol=1e-4)
 
-    eph_obj = RHF(mf)
+    hess = mf.Hessian().kernel()
+
+    eph_obj = ElectronPhononCoupling(mf)
+    eph_obj.verbose = 0
+    dv_ao = eph_obj.kernel()
+
+    # atmlst = [0, 1]
+    # assert abs(dv_ao[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+
+    res_sol = electron_phonon_coupling(
+        mol, hess=hess, dv_ao=dv_ao, verbose=5, 
+        exclude_rot=True, exclude_trans=True,
+        keep_imag_freq=False
+        )
+
+    from pyscf.eph import EPH
+    mol.verbose = 0
+    eph_obj = EPH(mf)
     eph_obj.verbose = 5
-    eph_obj.chkfile = None
-    eph_sol = eph_obj.kernel()
-    # chkfile = eph_obj.chkfile
-    # assert 1 == 2
+    mol.verbose = 5
+    res_ref = eph_obj.kernel(mo_rep=False)
 
-    # from pyscf.eph.rhf import EPH
-    # from pyscf.eph.rhf import get_eph
-    # def func(*args):
-    #     print("hack _freq_mass_weighted_vec")
-    #     print(args)
-    #     return numpy.eye(natm * 3)
-    # pyscf.eph.rhf._freq_mass_weighted_vec = func
-    # eph_obj = EPH(mf)
-    # eph_ref = get_eph(eph_obj, chkfile, omega=None, vec=None, mo_rep=False)
-
-    # err = numpy.linalg.norm(eph_sol - eph_ref)
-    # print('eph error %6.4e' % err)
-
-    hess_obj = hessian.RHF(mf)
-    hess_obj.verbose = 5
-
-    hess = hess_obj.kernel()
-
-    # from pyscf.hessian.thermo import harmonic_analysis
-    # mol.verbose = 5
-    # res = harmonic_analysis(mol, hess)
-
-    # print(res)
+    nmode = len(res_ref[1])
+    print(res_sol[0], res_ref[1])
