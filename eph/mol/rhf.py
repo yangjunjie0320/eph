@@ -99,7 +99,9 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
     freq_wn = freq_wn[mask]
     mode = mode[mask]
 
-    eph = numpy.einsum("axmn,Iax,I,a->Imn", dv_ao, mode, 1.0 / numpy.sqrt(2 * freq_au), 1.0 / (mass * MP_ME) ** 0.5)
+    m = mode * (1.0 / numpy.sqrt(2 * freq_au))[:, None, None]
+    m *= 1.0 / numpy.sqrt(mass)[None, :, None]
+    eph = numpy.einsum("axmn,Iax->Imn", dv_ao, m)
     return eph, freq_au
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
