@@ -9,7 +9,7 @@ from pyscf.lib import logger
 from pyscf.scf import hf, _vhf
 from pyscf import hessian
 
-import eph.mol.fd_eph
+from eph.mol import fd_eph
 from eph.mol.fd_eph import electron_phonon_coupling
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
@@ -120,7 +120,7 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
     nocc = orbo.shape[1]
 
     from pyscf.scf._response_functions import _gen_rhf_response
-    vresp = _gen_rhf_response(mf, mo_coeff, mo_occ, hermi=1)
+    vresp = _gen_rhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
         assert mo1 is not None

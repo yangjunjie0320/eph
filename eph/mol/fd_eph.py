@@ -150,9 +150,48 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         raise NotImplementedError
         
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
-    def kernel(self):
-        scan = self.base.as_scanner()
-        print(scan)
+    def kernel(self, atmlst=None, stepsize=1e-4):
+        if atmlst is None:
+            atmlst = range(self.mol.natm)
+
+        xyz = self.mol.atom_coords()
+        dm0 = self.base.make_rdm1()
+
+        scanner = self.base.as_scanner()
+        scanner.verbose = 0
+
+        dv = []
+        for i0, ia in enumerate(atmlst):
+            for x in range(3):
+                dx = numpy.zeros_like(xyz)
+
+                dx[ia, x] = stepsize
+
+                mol1 = self.mol.copy().set_geom_(xyz + dx)
+                scanner(mol1)
+                dm1 = scanner.make_rdm1()
+                assert scanner.converged
+
+                v1 = scanner.get_veff() + scanner.get_hcore()
+                v1 -= scanner.mol.intor("int1e_kin")
+
+                print(scanner.mol.atom_coords())
+
+                mol2 = self.mol.copy().set_geom_(xyz - dx)
+                scanner(mol2)
+                assert scanner.converged
+                dm2 = scanner.make_rdm1()
+
+                v2 = scanner.get_veff() + scanner.get_hcore()
+                v2 -= scanner.mol.intor("int1e_kin")
+
+                print(scanner.mol.atom_coords())
+
+                dv.append((v1 - v2) / (2 * stepsize))
+
+        nao = self.mol.nao_nr()
+        dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
+        return dv
 
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -167,18 +206,28 @@ if __name__ == '__main__':
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
+    mol.unit = "angstrom"
     mol.build()
 
     mf = scf.RHF(mol)
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-10
+    mf.conv_tol = 1e-8
+    mf.conv_tol_grad = 1e-8
     mf.kernel()
 
     grad = mf.nuc_grad_method().kernel()
     assert numpy.allclose(grad, 0.0, atol=1e-4)
-
     hess = mf.Hessian().kernel()
 
-    eph_obj = ElectronPhononCoupling(mf)
-    eph_obj.verbose = 0
-    dv_ao = eph_obj.kernel()
+    from eph.mol import rhf
+    eph_an = rhf.ElectronPhononCoupling(mf)
+    dv_ref = eph_an.kernel()
+
+    eph_fd = ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    for stepsize in [1e-2, 1e-3, 1e-4]:
+        dv_sol = eph_fd.kernel(stepsize=1e-4)
+        err = numpy.linalg.norm(dv_ref - dv_sol)
+        numpy.savetxt(mol.stdout, dv_ref[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
+        numpy.savetxt(mol.stdout, dv_sol[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
+
+        print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
