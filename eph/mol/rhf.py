@@ -90,19 +90,24 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
         else:
             log.info('mode %3d: %18s cm^-1', imode, f)
 
+    # sort the mask
+    mask = mask[numpy.argsort(freq_au[mask].real)[::-1]]
     freq_au = freq_au[mask]
     freq_wn = freq_wn[mask]
     mode = mode[mask]
 
-    mask = numpy.argsort(freq_wn)[::-1]
-    freq_au = freq_au[mask]
-    freq_wn = freq_wn[mask]
-    mode = mode[mask]
+    f = 1.0 / numpy.sqrt(2 * freq_au)
+    m = 1.0 / numpy.sqrt(mass * MP_ME)
+    eph = numpy.einsum("axmn,Iax,I,a->Imn", dv_ao, mode, f, m, optimize=True)
 
-    m = mode * (1.0 / numpy.sqrt(2 * freq_au))[:, None, None]
-    m *= 1.0 / numpy.sqrt(mass)[None, :, None]
-    eph = numpy.einsum("axmn,Iax->Imn", dv_ao, m)
-    return eph, freq_au
+    res = {
+        "freq_au": freq_au, # (nmode, )
+        "freq_wn": freq_wn, # (nmode, )
+        "mode": mode,       # (nmode, natm, 3)
+        "eph": eph          # (nmode, nao, nao)
+    }
+
+    return res
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
            h1ao=None, mo1=None, atmlst=None,
@@ -358,28 +363,13 @@ if __name__ == '__main__':
     eph_obj.verbose = 0
     dv_ao = eph_obj.kernel()
 
-    # atmlst = [0, 1]
-    # assert abs(dv_ao[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    atmlst = [0, 1]
+    assert abs(dv_ao[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
 
-    res_sol = electron_phonon_coupling(
+    res = electron_phonon_coupling(
         mol, hess=hess, dv_ao=dv_ao, verbose=5, 
         exclude_rot=True, exclude_trans=True,
         keep_imag_freq=False
         )
 
-    from pyscf.eph import EPH
-    mol.verbose = 0
-    eph_obj = EPH(mf)
-    eph_obj.verbose = 5
-    mol.verbose = 5
-    res_ref = eph_obj.kernel(mo_rep=False)
-
-    nmode = len(res_ref[1])
-    for imode in range(nmode):
-        print("Mode %d" % imode)
-        err = abs(res_ref[1][imode] - res_sol[1][imode])
-        assert err < 1e-8
-
-        err = abs(abs(res_ref[0][imode]) - abs(res_sol[0][imode])).max()
-        print("Error: ", err)
-        # print(res_ref[0][imode] / res_sol[0][imode])
+    print(res["eph"].shape)
