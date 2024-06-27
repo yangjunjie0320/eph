@@ -375,8 +375,9 @@ if __name__ == '__main__':
     nmode = len(res_ref[1])
     for imode in range(nmode):
         print("Mode %d" % imode)
-        print("Ref: ", res_ref[1][imode])
-        print("Sol: ", res_sol[1][imode])
+        err = abs(res_ref[1][imode] - res_sol[1][imode])
+        assert err < 1e-8
 
-        err = abs(res_ref[0][imode] - res_sol[0][imode]).max()
+        err = abs(abs(res_ref[0][imode]) - abs(res_sol[0][imode])).max()
         print("Error: ", err)
+        # print(res_ref[0][imode] / res_sol[0][imode])
