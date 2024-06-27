@@ -180,7 +180,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 assert scanner.converged
 
                 v1 = scanner.get_veff() + scanner.get_hcore()
-                v1 -= scanner.mol.intor("int1e_kin")
+                v1 -= scanner.mol.intor_symmetric("int1e_kin")
 
                 mol2 = self.mol.copy().set_geom_(xyz - dx)
                 scanner(mol2)
@@ -188,12 +188,13 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dm2 = scanner.make_rdm1()
 
                 v2 = scanner.get_veff() + scanner.get_hcore()
-                v2 -= scanner.mol.intor("int1e_kin")
+                v2 -= scanner.mol.intor_symmetric("int1e_kin")
 
                 vv = (v1 - v2) / (2 * stepsize)
 
-                vv[p0:p1] -= v0[x, p0:p1]
+                vv[p0:p1]    -= v0[x, p0:p1]
                 vv[:, p0:p1] -= v0[x, p0:p1].T
+                dv.append(vv)
 
         nao = self.mol.nao_nr()
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
@@ -235,5 +236,4 @@ if __name__ == '__main__':
         err = numpy.linalg.norm(dv_ref - dv_sol)
         numpy.savetxt(mol.stdout, dv_ref[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
         numpy.savetxt(mol.stdout, dv_sol[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
-
         print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
