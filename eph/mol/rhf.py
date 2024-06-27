@@ -377,6 +377,6 @@ if __name__ == '__main__':
         print("Mode %d" % imode)
         print("Ref: ", res_ref[1][imode])
         print("Sol: ", res_sol[1][imode])
-        
-        err = numpy.linalg.norm(res_ref[0][imode] - res_sol[0][imode])
+
+        err = abs(res_ref[0][imode] - res_sol[0][imode]).max()
         print("Error: ", err)
