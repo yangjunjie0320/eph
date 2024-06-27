@@ -212,9 +212,7 @@ def gen_vnuc_deriv(mol):
 
 def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
     log = logger.new_logger(None, log)
-    mol = scf_obj.mol
     nao = mo_coeff.shape[0]
-    natm = mol.natm
 
     nao, nmo = mo_coeff.shape
     mask = mo_occ > 0
@@ -295,6 +293,9 @@ class ElectronPhononCouplingBase(lib.StreamObject):
             self.max_memory, lib.current_memory()[0]
             )
         return self
+    
+    def _finalize(self):
+        pass
     
     def gen_vnuc_deriv(self, mol=None):
         if mol is None: mol = self.mol
