@@ -100,12 +100,8 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
     m = 1.0 / numpy.sqrt(mass * MP_ME)
     eph = numpy.einsum("axmn,Iax,I,a->Imn", dv_ao, mode, f, m, optimize=True)
 
-    res = {
-        "freq_au": freq_au, # (nmode, )
-        "freq_wn": freq_wn, # (nmode, )
-        "mode": mode,       # (nmode, natm, 3)
-        "eph": eph          # (nmode, nao, nao)
-    }
+    res = {k:v[mask] for k, v in res.items()}
+    res["eph"] = eph
 
     return res
 
