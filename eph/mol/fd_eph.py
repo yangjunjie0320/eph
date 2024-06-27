@@ -155,13 +155,20 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             atmlst = range(self.mol.natm)
 
         xyz = self.mol.atom_coords()
+        aoslices = self.mol.aoslice_by_atom()
+
         dm0 = self.base.make_rdm1()
+        nao = self.mol.nao_nr()
+
+        v0 = self.base.get_veff() + self.base.get_hcore() + self.base.mol.intor("int1e_ipkin")
+        assert v0.shape == (3, nao, nao)
 
         scanner = self.base.as_scanner()
         scanner.verbose = 0
 
         dv = []
         for i0, ia in enumerate(atmlst):
+            s0, s1, p0, p1 = aoslices[ia]
             for x in range(3):
                 dx = numpy.zeros_like(xyz)
 
@@ -175,8 +182,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 v1 = scanner.get_veff() + scanner.get_hcore()
                 v1 -= scanner.mol.intor("int1e_kin")
 
-                print(scanner.mol.atom_coords())
-
                 mol2 = self.mol.copy().set_geom_(xyz - dx)
                 scanner(mol2)
                 assert scanner.converged
@@ -185,9 +190,10 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 v2 = scanner.get_veff() + scanner.get_hcore()
                 v2 -= scanner.mol.intor("int1e_kin")
 
-                print(scanner.mol.atom_coords())
+                vv = (v1 - v2) / (2 * stepsize)
 
-                dv.append((v1 - v2) / (2 * stepsize))
+                vv[p0:p1] -= v0[x, p0:p1]
+                vv[:, p0:p1] -= v0[x, p0:p1].T
 
         nao = self.mol.nao_nr()
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
