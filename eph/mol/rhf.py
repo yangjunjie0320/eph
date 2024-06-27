@@ -43,7 +43,7 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
             and the electron-phonon coupling for each mode.
     """
     if mass is None:
-        mass = mol.atom_mass_list(isotope_avg=True)
+        mass = mol.atom_mass_list()
 
     assert hess  is not None
     assert dv_ao is not None
@@ -62,10 +62,11 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
         )
     
     freq = nm["freq_au"] / MP_ME ** 0.5
-    mode = nm["norm_mode"]
+    # mode =  # shape (nmode, natm, 3, )
+    mode = numpy.einsum("Iax,a->Iax", nm["norm_mode"], mass ** 0.5)
     nmode = len(freq)
 
-    freq_au = nm["freq_au"] / MP_ME ** 0.5
+    freq_au = freq
     freq_wn = nm["freq_wavenumber"]
 
     assert mode.shape == (nmode, natm, 3)
@@ -93,13 +94,13 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
     freq_wn = freq_wn[mask]
     mode = mode[mask]
 
-    mask = numpy.argsort(freq_wn)
+    mask = numpy.argsort(freq_wn)[::-1]
     freq_au = freq_au[mask]
     freq_wn = freq_wn[mask]
     mode = mode[mask]
 
-    eph = numpy.einsum("axmn,Iax,I->Imn", dv_ao, mode, 1.0 / numpy.sqrt(2 * freq_au))
-    return freq_au, eph
+    eph = numpy.einsum("axmn,Iax,I,a->Imn", dv_ao, mode, 1.0 / numpy.sqrt(2 * freq_au), 1.0 / (mass * MP_ME) ** 0.5)
+    return eph, freq_au
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
            h1ao=None, mo1=None, atmlst=None,
@@ -372,4 +373,10 @@ if __name__ == '__main__':
     res_ref = eph_obj.kernel(mo_rep=False)
 
     nmode = len(res_ref[1])
-    print(res_sol[0], res_ref[1])
+    for imode in range(nmode):
+        print("Mode %d" % imode)
+        print("Ref: ", res_ref[1][imode])
+        print("Sol: ", res_sol[1][imode])
+        
+        err = numpy.linalg.norm(res_ref[0][imode] - res_sol[0][imode])
+        print("Error: ", err)
