@@ -178,29 +178,17 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dxyz = numpy.zeros_like(xyz)
                 dxyz[ia, x] = stepsize
 
-                mol1 = mol.set_geom_(xyz + dxyz, inplace=False, unit='B')
-                mol2 = mol.set_geom_(xyz - dxyz, inplace=False, unit='B')
+                scanner(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
+                v1 = scanner.get_veff() + scanner.get_hcore() - scanner.mol.intor_symmetric("int1e_kin")
 
-                print("Computing %d-th atom, %d-th component" % (ia, x))
+                scanner(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
+                v2 = scanner.get_veff() + scanner.get_hcore() - scanner.mol.intor_symmetric("int1e_kin")
 
-                mf1 = scf.RHF(mol1)
-                mf1.__dict__.update(scf_obj.__dict__)
-                mf1.kernel(dm0)
+                dv_ia_x = (v1 - v2) / (2 * stepsize)
 
-                # v1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor("int1e_kin")
-
-                mf2 = scf.RHF(mol2)
-                mf2.__dict__.update(scf_obj.__dict__)
-                mf2.kernel(dm0)
-
-                # v2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor("int1e_kin")
-
-                # dv_ia_x = (v1 - v2) / (2 * stepsize)
-
-                # dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
-                # dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
-
-                # dv.append(dv_ia_x)
+                dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
+                dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
+                dv.append(dv_ia_x)
 
 
         nao = self.mol.nao_nr()
@@ -219,9 +207,6 @@ def get_vmat(mf, mfset, disp):
         vfull1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor_symmetric('int1e_kin')  # <u+|V+|v+>
         vfull2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor_symmetric('int1e_kin')  # <u-|V-|v->
         vfull = (vfull1 - vfull2)/disp  # (<p+|V+|q+>-<p-|V-|q->)/dR
-
-        print("ki = %d, atmid = %d, axis = %d, p0 = %d, p1 = %d" % (ki, atmid, axis, p0, p1))
-        numpy.savetxt(mf.mol.stdout, vfull, fmt="% 6.4e", delimiter=", ", header="vfull1")
 
         if RESTRICTED:
             vfull[p0:p1] -= ve[axis,p0:p1]
@@ -266,27 +251,11 @@ if __name__ == '__main__':
     eph_fd = ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
     for stepsize in [1e-2, 1e-3, 1e-4, 1e-5]:
-        # dv_sol = eph_fd.kernel(stepsize=stepsize)
-        # err = numpy.linalg.norm(dv_ref - dv_sol)
-        # numpy.savetxt(mol.stdout, dv_ref[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
-        # numpy.savetxt(mol.stdout, dv_sol[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
-        # print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
+        dv_sol = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)
+        dv_ref = dv_ref
 
-        from pyscf.eph.eph_fd import gen_moles, run_mfs
-        mol1, mol2 = gen_moles(mol, stepsize * 0.5)
-        mfs = run_mfs(mf, mol1, mol2)
-        dv_sol_1 = get_vmat(mf, mfs, stepsize).reshape(dv_ref.shape)
-        dv_sol_2 = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)
-
-        err = abs(dv_sol_1 - dv_sol_2).max()
+        err = abs(dv_ref - dv_sol).max()
         print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
-
-        assert 1 == 2
-
-        # dv_ref = dv_ref.reshape(dv_sol.shape)
-
-        # err = abs(dv_ref - dv_sol).max()
-        # print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
 
         # numpy.savetxt(mol.stdout, dv_ref[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
         # numpy.savetxt(mol.stdout, dv_sol[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
