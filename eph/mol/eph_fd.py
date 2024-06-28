@@ -187,20 +187,20 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 mf1.__dict__.update(scf_obj.__dict__)
                 mf1.kernel(dm0)
 
-                v1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor("int1e_kin")
+                # v1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor("int1e_kin")
 
                 mf2 = scf.RHF(mol2)
                 mf2.__dict__.update(scf_obj.__dict__)
                 mf2.kernel(dm0)
 
-                v2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor("int1e_kin")
+                # v2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor("int1e_kin")
 
-                dv_ia_x = (v1 - v2) / (2 * stepsize)
+                # dv_ia_x = (v1 - v2) / (2 * stepsize)
 
-                dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
-                dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
+                # dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
+                # dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
 
-                dv.append(dv_ia_x)
+                # dv.append(dv_ia_x)
 
 
         nao = self.mol.nao_nr()
@@ -219,7 +219,7 @@ def get_vmat(mf, mfset, disp):
         vfull1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor_symmetric('int1e_kin')  # <u+|V+|v+>
         vfull2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor_symmetric('int1e_kin')  # <u-|V-|v->
         vfull = (vfull1 - vfull2)/disp  # (<p+|V+|q+>-<p-|V-|q->)/dR
-        
+
         print("ki = %d, atmid = %d, axis = %d, p0 = %d, p1 = %d" % (ki, atmid, axis, p0, p1))
         numpy.savetxt(mf.mol.stdout, vfull, fmt="% 6.4e", delimiter=", ", header="vfull1")
 
@@ -280,6 +280,8 @@ if __name__ == '__main__':
 
         err = abs(dv_sol_1 - dv_sol_2).max()
         print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
+
+        assert 1 == 2
 
         # dv_ref = dv_ref.reshape(dv_sol.shape)
 
