@@ -245,7 +245,7 @@ if __name__ == '__main__':
         dv_sol = get_vmat(mf, mfs, stepsize)
         dv_ref = dv_ref.reshape(dv_sol.shape)
 
-        err = numpy.linalg.norm(dv_ref - dv_sol)
+        err = abs(dv_ref - dv_sol).max()
         print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
 
         numpy.savetxt(mol.stdout, dv_ref[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
