@@ -2,7 +2,6 @@ import os, numpy, scipy, tempfile
 
 import pyscf
 from pyscf import lib, scf
-import pyscf.eph
 from pyscf.gto.mole import is_au
 import pyscf.hessian
 from pyscf.lib import logger
@@ -15,10 +14,10 @@ CUTOFF_FREQUENCY      = getattr(__config__, 'eph_cutoff_frequency', 80)  # 80 cm
 KEEP_IMAG_FREQUENCY   = getattr(__config__, 'eph_keep_imaginary_frequency', False)
 IMAG_CUTOFF_FREQUENCY = getattr(__config__, 'eph_imag_cutoff_frequency', 1e-4) # 1e-4 cm-1
 
-def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None, 
-                             exclude_rot=True, exclude_trans=True, 
-                             verbose=None, 
-                             cutoff_frequency=CUTOFF_FREQUENCY, keep_imag_freq=KEEP_IMAG_FREQUENCY,
+def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
+                             exclude_rot=True, exclude_trans=True, verbose=None,
+                             cutoff_frequency=CUTOFF_FREQUENCY,
+                             keep_imag_freq=KEEP_IMAG_FREQUENCY,
                              imag_cutoff_frequency=IMAG_CUTOFF_FREQUENCY):
     """
     Perform the harmonic analysis and compute the electron-phonon coupling
@@ -51,7 +50,7 @@ def electron_phonon_coupling(mol, hess=None, dv_ao=None, mass=None,
     natm = mol.natm
     nao = mol.nao_nr()
 
-    assert hess.shape == (natm, natm, 3, 3)
+    assert hess.shape  == (natm, natm, 3, 3)
     assert dv_ao.shape == (natm, 3, nao, nao)
 
     from pyscf.hessian.thermo import harmonic_analysis
@@ -120,10 +119,14 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         self.mol = method.mol
         self.base = method
         self.atmlst = None
+        self.to_normal_mode = True
 
         self.max_memory = method.max_memory
         self.unit = 'au'
-        self.dveff  = None
+        self.dv_ao = None
+
+        self.eph   = None
+        self.freq  = None
 
     def dump_flags(self, verbose=None):
         log = logger.new_logger(self, verbose)
@@ -143,7 +146,15 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         log.info(
             'max_memory %d MB (current use %d MB)',
             self.max_memory, lib.current_memory()[0]
+        )
+        return self
+    
+    def _finalize(self, dv_ao=None, hess=None, mass=None):
+        res = electron_phonon_coupling(
+            self.mol, hess=hess, dv_ao=dv_ao, mass=mass
             )
+        self.freq = res["freq_au"]
+        self.eph  = res["eph"]
         return self
 
     def kernel(self):
@@ -189,6 +200,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         nao = self.mol.nao_nr()
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
+        self.dv_ao = dv
+        self._finalize()
         return dv
 
 if __name__ == '__main__':
