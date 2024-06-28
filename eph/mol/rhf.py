@@ -218,29 +218,30 @@ if __name__ == '__main__':
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
+    mol.unit = "AA"
     mol.build()
 
     mf = scf.RHF(mol)
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-10
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-12
+    mf.max_cycle = 1000
     mf.kernel()
 
     grad = mf.nuc_grad_method().kernel()
     assert numpy.allclose(grad, 0.0, atol=1e-4)
-
     hess = mf.Hessian().kernel()
 
-    eph_obj = ElectronPhononCoupling(mf)
-    eph_obj.verbose = 0
-    dv_ao = eph_obj.kernel()
+    from eph.mol import rhf
+    eph_obj = rhf.ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
 
     atmlst = [0, 1]
-    assert abs(dv_ao[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
 
-    res = electron_phonon_coupling(
-        mol, hess=hess, dv_ao=dv_ao, verbose=5, 
-        exclude_rot=True, exclude_trans=True,
-        keep_imag_freq=False
-        )
-
-    print(res["eph"].shape)
+    # Test the finite difference against the analytic results
+    eph_fd = eph_fd.ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
+        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        err = abs(dv_sol - dv_ref).max()
+        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))

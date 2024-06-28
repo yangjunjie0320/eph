@@ -158,8 +158,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         xyz = mol.atom_coords()
         aoslices = mol.aoslice_by_atom()
 
-        scf_obj = self.base
-
         dm0 = self.base.make_rdm1()
         nao = dm0.shape[0]
         assert dm0.shape == (nao, nao)
@@ -168,8 +166,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         v0 = grad_obj.get_veff() + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
         assert v0.shape == (3, nao, nao)
 
-        scanner = self.base.as_scanner()
-        scanner.verbose = 0
+        scan_obj = self.base.as_scanner()
 
         dv = []
         for i0, ia in enumerate(atmlst):
@@ -178,11 +175,11 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dxyz = numpy.zeros_like(xyz)
                 dxyz[ia, x] = stepsize
 
-                scanner(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
-                v1 = scanner.get_veff() + scanner.get_hcore() - scanner.mol.intor_symmetric("int1e_kin")
+                scan_obj(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
+                v1 = scan_obj.get_veff() + scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
 
-                scanner(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
-                v2 = scanner.get_veff() + scanner.get_hcore() - scanner.mol.intor_symmetric("int1e_kin")
+                scan_obj(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
+                v2 = scan_obj.get_veff() + scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
 
                 dv_ia_x = (v1 - v2) / (2 * stepsize)
 
@@ -190,33 +187,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
                 dv.append(dv_ia_x)
 
-
         nao = self.mol.nao_nr()
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
         return dv
-    
-def get_vmat(mf, mfset, disp):
-    vmat=[]
-    mygrad = mf.nuc_grad_method()
-    ve = mygrad.get_veff() + mygrad.get_hcore() + mf.mol.intor("int1e_ipkin")
-    RESTRICTED = (ve.ndim==3)
-    aoslice = mf.mol.aoslice_by_atom()
-    for ki, (mf1, mf2) in enumerate(mfset):
-        atmid, axis = numpy.divmod(ki, 3)
-        p0, p1 = aoslice[atmid][2:]
-        vfull1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor_symmetric('int1e_kin')  # <u+|V+|v+>
-        vfull2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor_symmetric('int1e_kin')  # <u-|V-|v->
-        vfull = (vfull1 - vfull2)/disp  # (<p+|V+|q+>-<p-|V-|q->)/dR
-
-        if RESTRICTED:
-            vfull[p0:p1] -= ve[axis,p0:p1]
-            vfull[:,p0:p1] -= ve[axis,p0:p1].T
-        else:
-            vfull[:,p0:p1] -= ve[:,axis,p0:p1]
-            vfull[:,:,p0:p1] -= ve[:,axis,p0:p1].transpose(0,2,1)
-        vmat.append(vfull)
-
-    return numpy.asarray(vmat)
 
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -227,35 +200,39 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = 'sto3g'
+    mol.basis = '631g*'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
-    mol.unit = "angstrom"
+    mol.unit = "AA"
     mol.build()
 
     mf = scf.RHF(mol)
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-10
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-12
     mf.max_cycle = 1000
     mf.kernel()
 
-    # grad = mf.nuc_grad_method().kernel()
-    # assert numpy.allclose(grad, 0.0, atol=1e-4)
-    # hess = mf.Hessian().kernel()
+    grad = mf.nuc_grad_method().kernel()
+    assert numpy.allclose(grad, 0.0, atol=1e-4)
+    hess = mf.Hessian().kernel()
 
     from eph.mol import rhf
     eph_an = rhf.ElectronPhononCoupling(mf)
-    dv_ref = eph_an.kernel()
+    dv_an = eph_an.kernel()
 
+    # Test the finite difference against the analytic results
     eph_fd = ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
-    for stepsize in [1e-2, 1e-3, 1e-4, 1e-5]:
-        dv_sol = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)
-        dv_ref = dv_ref
+    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
+        dv_fd = eph_fd.kernel(stepsize=stepsize).reshape(dv_an.shape)
+        err = abs(dv_an - dv_fd).max()
+        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
-        err = abs(dv_ref - dv_sol).max()
-        print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
+        atmlst = [0, 1]
+        assert abs(dv_fd[atmlst] - eph_fd.kernel(atmlst=atmlst, stepsize=stepsize)).max() < 1e-6
 
-        # numpy.savetxt(mol.stdout, dv_ref[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
-        # numpy.savetxt(mol.stdout, dv_sol[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
+    # Test the electron-phonon coupling
+    dv = dv_an
+    mass = mol.atom_mass_list()
+    res = electron_phonon_coupling(mol, hess=hess, dv_ao=dv, mass=mass)
