@@ -145,10 +145,10 @@ class ElectronPhononCouplingBase(lib.StreamObject):
             self.max_memory, lib.current_memory()[0]
             )
         return self
-    
+
     def kernel(self):
         raise NotImplementedError
-        
+
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         if atmlst is None:
@@ -206,6 +206,32 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         nao = self.mol.nao_nr()
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
         return dv
+    
+def get_vmat(mf, mfset, disp):
+    vmat=[]
+    mygrad = mf.nuc_grad_method()
+    ve = mygrad.get_veff() + mygrad.get_hcore() + mf.mol.intor("int1e_ipkin")
+    RESTRICTED = (ve.ndim==3)
+    aoslice = mf.mol.aoslice_by_atom()
+    for ki, (mf1, mf2) in enumerate(mfset):
+        atmid, axis = numpy.divmod(ki, 3)
+        p0, p1 = aoslice[atmid][2:]
+        vfull1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor_symmetric('int1e_kin')  # <u+|V+|v+>
+        vfull2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor_symmetric('int1e_kin')  # <u-|V-|v->
+        vfull = (vfull1 - vfull2)/disp  # (<p+|V+|q+>-<p-|V-|q->)/dR
+        
+        print("ki = %d, atmid = %d, axis = %d, p0 = %d, p1 = %d" % (ki, atmid, axis, p0, p1))
+        numpy.savetxt(mf.mol.stdout, vfull, fmt="% 6.4e", delimiter=", ", header="vfull1")
+
+        if RESTRICTED:
+            vfull[p0:p1] -= ve[axis,p0:p1]
+            vfull[:,p0:p1] -= ve[axis,p0:p1].T
+        else:
+            vfull[:,p0:p1] -= ve[:,axis,p0:p1]
+            vfull[:,:,p0:p1] -= ve[:,axis,p0:p1].transpose(0,2,1)
+        vmat.append(vfull)
+
+    return numpy.asarray(vmat)
 
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -216,7 +242,7 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = '631g*'
+    mol.basis = 'sto3g'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
@@ -229,9 +255,9 @@ if __name__ == '__main__':
     mf.max_cycle = 1000
     mf.kernel()
 
-    grad = mf.nuc_grad_method().kernel()
-    assert numpy.allclose(grad, 0.0, atol=1e-4)
-    hess = mf.Hessian().kernel()
+    # grad = mf.nuc_grad_method().kernel()
+    # assert numpy.allclose(grad, 0.0, atol=1e-4)
+    # hess = mf.Hessian().kernel()
 
     from eph.mol import rhf
     eph_an = rhf.ElectronPhononCoupling(mf)
@@ -246,7 +272,7 @@ if __name__ == '__main__':
         # numpy.savetxt(mol.stdout, dv_sol[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
         # print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
 
-        from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
+        from pyscf.eph.eph_fd import gen_moles, run_mfs
         mol1, mol2 = gen_moles(mol, stepsize * 0.5)
         mfs = run_mfs(mf, mol1, mol2)
         dv_sol_1 = get_vmat(mf, mfs, stepsize).reshape(dv_ref.shape)

@@ -9,8 +9,8 @@ from pyscf.lib import logger
 from pyscf.scf import hf, _vhf
 from pyscf import hessian
 
-from eph.mol import fd_eph
-from eph.mol.fd_eph import electron_phonon_coupling
+from eph.mol import eph_fd
+from eph.mol.eph_fd import electron_phonon_coupling
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
            h1ao=None, mo1=None, atmlst=None,
@@ -156,7 +156,7 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
     
     return func
 
-class ElectronPhononCouplingBase(fd_eph.ElectronPhononCouplingBase):
+class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     level_shift = 0.0
     max_cycle = 50
     
