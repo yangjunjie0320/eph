@@ -218,8 +218,9 @@ if __name__ == '__main__':
     mol.build()
 
     mf = scf.RHF(mol)
-    mf.conv_tol = 1e-8
-    mf.conv_tol_grad = 1e-8
+    mf.conv_tol = 1e-15
+    mf.conv_tol_grad = 1e-15
+    mf.max_cycle = 1000
     mf.kernel()
 
     grad = mf.nuc_grad_method().kernel()
