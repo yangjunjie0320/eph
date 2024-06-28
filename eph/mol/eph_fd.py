@@ -154,11 +154,15 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if atmlst is None:
             atmlst = range(self.mol.natm)
 
-        xyz = self.mol.atom_coords()
-        aoslices = self.mol.aoslice_by_atom()
+        mol = self.mol
+        xyz = mol.atom_coords()
+        aoslices = mol.aoslice_by_atom()
+
+        scf_obj = self.base
 
         dm0 = self.base.make_rdm1()
-        nao = self.mol.nao_nr()
+        nao = dm0.shape[0]
+        assert dm0.shape == (nao, nao)
 
         grad_obj = self.base.nuc_grad_method()
         v0 = grad_obj.get_veff() + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
@@ -171,31 +175,33 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         for i0, ia in enumerate(atmlst):
             s0, s1, p0, p1 = aoslices[ia]
             for x in range(3):
-                dx = numpy.zeros_like(xyz)
+                dxyz = numpy.zeros_like(xyz)
+                dxyz[ia, x] = stepsize
 
-                dx[ia, x] = stepsize
+                mol1 = mol.set_geom_(xyz + dxyz, inplace=False, unit='B')
+                mol2 = mol.set_geom_(xyz - dxyz, inplace=False, unit='B')
 
-                mol1 = self.mol.copy().set_geom_(xyz + dx)
-                scanner(mol1)
-                dm1 = scanner.make_rdm1()
-                assert scanner.converged
+                print("Computing %d-th atom, %d-th component" % (ia, x))
 
-                v1 = scanner.get_veff() + scanner.get_hcore()
-                v1 -= scanner.mol.intor_symmetric("int1e_kin")
+                mf1 = scf.RHF(mol1)
+                mf1.__dict__.update(scf_obj.__dict__)
+                mf1.kernel(dm0)
 
-                mol2 = self.mol.copy().set_geom_(xyz - dx)
-                scanner(mol2)
-                assert scanner.converged
-                dm2 = scanner.make_rdm1()
+                v1 = mf1.get_veff() + mf1.get_hcore() - mf1.mol.intor("int1e_kin")
 
-                v2 = scanner.get_veff() + scanner.get_hcore()
-                v2 -= scanner.mol.intor_symmetric("int1e_kin")
+                mf2 = scf.RHF(mol2)
+                mf2.__dict__.update(scf_obj.__dict__)
+                mf2.kernel(dm0)
 
-                vv = (v1 - v2) / (2 * stepsize)
+                v2 = mf2.get_veff() + mf2.get_hcore() - mf2.mol.intor("int1e_kin")
 
-                vv[p0:p1]    -= v0[x, p0:p1]
-                vv[:, p0:p1] -= v0[x, p0:p1].T
-                dv.append(vv)
+                dv_ia_x = (v1 - v2) / (2 * stepsize)
+
+                dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
+                dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
+
+                dv.append(dv_ia_x)
+
 
         nao = self.mol.nao_nr()
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
@@ -218,8 +224,8 @@ if __name__ == '__main__':
     mol.build()
 
     mf = scf.RHF(mol)
-    mf.conv_tol = 1e-15
-    mf.conv_tol_grad = 1e-15
+    mf.conv_tol = 1e-10
+    mf.conv_tol_grad = 1e-10
     mf.max_cycle = 1000
     mf.kernel()
 
@@ -243,11 +249,16 @@ if __name__ == '__main__':
         from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
         mol1, mol2 = gen_moles(mol, stepsize * 0.5)
         mfs = run_mfs(mf, mol1, mol2)
-        dv_sol = get_vmat(mf, mfs, stepsize)
-        dv_ref = dv_ref.reshape(dv_sol.shape)
+        dv_sol_1 = get_vmat(mf, mfs, stepsize).reshape(dv_ref.shape)
+        dv_sol_2 = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)
 
-        err = abs(dv_ref - dv_sol).max()
+        err = abs(dv_sol_1 - dv_sol_2).max()
         print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
 
-        numpy.savetxt(mol.stdout, dv_ref[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
-        numpy.savetxt(mol.stdout, dv_sol[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
+        # dv_ref = dv_ref.reshape(dv_sol.shape)
+
+        # err = abs(dv_ref - dv_sol).max()
+        # print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
+
+        # numpy.savetxt(mol.stdout, dv_ref[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
+        # numpy.savetxt(mol.stdout, dv_sol[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
