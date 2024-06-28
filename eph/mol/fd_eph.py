@@ -160,7 +160,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dm0 = self.base.make_rdm1()
         nao = self.mol.nao_nr()
 
-        v0 = self.base.get_veff() + self.base.get_hcore() + self.base.mol.intor("int1e_ipkin")
+        grad_obj = self.base.nuc_grad_method()
+        v0 = grad_obj.get_veff() + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
         assert v0.shape == (3, nao, nao)
 
         scanner = self.base.as_scanner()
@@ -231,9 +232,21 @@ if __name__ == '__main__':
 
     eph_fd = ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
-    for stepsize in [1e-2, 1e-3, 1e-4]:
-        dv_sol = eph_fd.kernel(stepsize=1e-4)
+    for stepsize in [1e-2, 1e-3, 1e-4, 1e-5]:
+        # dv_sol = eph_fd.kernel(stepsize=stepsize)
+        # err = numpy.linalg.norm(dv_ref - dv_sol)
+        # numpy.savetxt(mol.stdout, dv_ref[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
+        # numpy.savetxt(mol.stdout, dv_sol[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
+        # print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
+
+        from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
+        mol1, mol2 = gen_moles(mol, stepsize * 0.5)
+        mfs = run_mfs(mf, mol1, mol2)
+        dv_sol = get_vmat(mf, mfs, stepsize)
+        dv_ref = dv_ref.reshape(dv_sol.shape)
+
         err = numpy.linalg.norm(dv_ref - dv_sol)
-        numpy.savetxt(mol.stdout, dv_ref[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
-        numpy.savetxt(mol.stdout, dv_sol[0, 0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
         print("stepsize = %6.4e, error = %6.4e" % (stepsize, err))
+
+        numpy.savetxt(mol.stdout, dv_ref[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_ref")
+        numpy.savetxt(mol.stdout, dv_sol[0][:10, :10], fmt="% 6.4e", delimiter=",", header="dv_sol")
