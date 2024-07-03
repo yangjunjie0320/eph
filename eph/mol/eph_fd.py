@@ -163,12 +163,13 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         aoslices = mol.aoslice_by_atom()
 
         dm0 = self.base.make_rdm1()
-        nao = dm0.shape[0]
-        assert dm0.shape == (nao, nao)
+        nao = mol.nao_nr()
+        spin = 1 if dm0.ndim == 2 else 2
+        dm0 = dm0.reshape(spin, nao, nao)
 
         grad_obj = self.base.nuc_grad_method()
         v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
-        assert v0.shape == (3, nao, nao)
+        assert v0.shape == (spin, 3, nao, nao)
 
         scan_obj = self.base.as_scanner()
 
@@ -181,22 +182,34 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
                 scan_obj(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
                 dm1 = scan_obj.make_rdm1()
-                v1  = scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-                v1 += scan_obj.get_veff(dm=dm1)
+                v1  = scan_obj.get_veff(dm=dm1)
+                v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+                
 
                 scan_obj(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
                 dm2 = scan_obj.make_rdm1()
-                v2  = scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-                v2 += scan_obj.get_veff(dm=dm2)
+                v2  = scan_obj.get_veff(dm=dm2)
+                v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+
+                assert v1.shape == v2.shape == (spin, nao, nao)
 
                 dv_ia_x = (v1 - v2) / (2 * stepsize)
 
-                dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
-                dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
+                for s in range(spin):
+                    dv_ia_x[s, p0:p1, :] -= v0[s, x, p0:p1]
+                    dv_ia_x[s, :, p0:p1] -= v0[s, x, p0:p1].T
+                # dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
+                # dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
                 dv.append(dv_ia_x)
 
         nao = self.mol.nao_nr()
-        dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
+
+        if spin == 1:
+            dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
+
+        elif spin == 2:
+            dv = numpy.array(dv).reshape(len(atmlst), 3, 2, nao, nao)
+
         self.dv_ao = dv
         return dv
 
