@@ -181,6 +181,10 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
 
     def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, tmpfile=None, atmlst=None, log=None):
         raise NotImplementedError
+    
+    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, h1ao_or_chkfile=None,
+                        fx=None, atmlst=None, max_memory=4000, verbose=None):
+        raise NotImplementedError
 
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
