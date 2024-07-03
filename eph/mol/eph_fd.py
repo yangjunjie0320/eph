@@ -199,22 +199,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
         self.dv_ao = dv
         return dv
-    
-def dveff_to_dvnuc(dv, mf_obj=None):
-    nocc = numpy.count_nonzero(mf_obj.mo_occ)
-    orbo = mf_obj.mo_coeff[:,mf_obj.mo_occ>0]
-    orbv = mf_obj.mo_coeff[:,mf_obj.mo_occ==0]
-    e_o = mf_obj.mo_energy[mf_obj.mo_occ>0]
-    e_v = mf_obj.mo_energy[mf_obj.mo_occ==0]
-
-    dv_vo = numpy.einsum('mn,ma,ni->ai', dv, orbv, orbo)
-    e_vo = e_v[:, None] - e_o
-    ddm = orbv @ (dv_vo / e_vo) @ orbo.T
-    ddm = - (ddm + ddm.T) * 2
-
-    vresp = mf_obj.gen_response(hermi=0)
-    dv0 = dv - vresp(ddm)
-    return dv0
 
 if __name__ == '__main__':
     from pyscf import gto, scf
