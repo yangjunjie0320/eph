@@ -53,6 +53,9 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
 def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
     mol = eph_obj.mol
     scf_obj = eph_obj.base
+    
+    if atmlst is None:
+        atmlst = range(mol.natm)
 
     mask = mo_occ > 0
     orbo = mo_coeff[:, mask]
@@ -72,13 +75,14 @@ def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
         script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
         script_dms += ['jk->s1il', -dm0]           # vk2
 
-        from pyscf.hessian import rhf
-        vj1, vj2, vk1, vk2 = rhf._get_jk(
+        from pyscf.hessian.rhf import _get_jk
+        tmp = _get_jk(
             mol, 'int2e_ip1', 3, 's2kl',
             script_dms=script_dms,
             shls_slice=shls_slice
         )
 
+        vj1, vj2, vk1, vk2 = tmp
         vhf = vj1 - vk1 * 0.5
         vhf[:, p0:p1] += vj2 - vk2 * 0.5
 

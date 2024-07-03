@@ -12,92 +12,141 @@ from pyscf import hessian
 from eph.mol import eph_fd, rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
-
+    
 def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
     mol = eph_obj.mol
     scf_obj = eph_obj.base
 
-    mask = mo_occ > 0
-    orbo = mo_coeff[:, mask]
-    dm0 = numpy.dot(orbo, orbo.T) * 2.0
+    if atmlst is None:
+        atmlst = range(mol.natm)
+
+    nao, nmo = mo_coeff[0].shape
+    ma = mo_occ[0] > 0
+    mb = mo_occ[1] > 0
+
+    orboa = mo_coeff[0][:, ma]
+    orbob = mo_coeff[1][:, mb]
+
+    dm0a = numpy.dot(orboa, orboa.T)
+    dm0b = numpy.dot(orbob, orbob.T)
+    hcore_deriv = eph_obj.base.nuc_grad_method().hcore_generator(mol)
 
     nbas = mol.nbas
     aoslices = mol.aoslice_by_atom()
-    h1ao = [None] * mol.natm
+    h1aoa = [None] * mol.natm
+    h1aob = [None] * mol.natm
 
-    hcore_deriv = scf_obj.nuc_grad_method().hcore_generator(mol)
     for i0, ia in enumerate(atmlst):
         s0, s1, p0, p1 = aoslices[ia]
 
         shls_slice  = (s0, s1) + (0, nbas) * 3
-        script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
-        script_dms += ['lk->s1ij', -dm0]           # vj2
-        script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
-        script_dms += ['jk->s1il', -dm0]           # vk2
+        script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
+        script_dms += ['ji->s2kl', -dm0b[:,p0:p1]] # vj1b
+        script_dms += ['lk->s1ij', -dm0a         ] # vj2a
+        script_dms += ['lk->s1ij', -dm0b         ] # vj2b
+        script_dms += ['li->s1kj', -dm0a[:,p0:p1]] # vk1a
+        script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
+        script_dms += ['jk->s1il', -dm0a         ] # vk2a
+        script_dms += ['jk->s1il', -dm0b         ] # vk2b
 
-        from pyscf.hessian import rhf
-        vj1, vj2, vk1, vk2 = rhf._get_jk(
+        from pyscf.hessian.uhf import _get_jk
+        tmp = _get_jk(
             mol, 'int2e_ip1', 3, 's2kl',
             script_dms=script_dms,
             shls_slice=shls_slice
         )
+        
+        vj1a, vj1b, vj2a, vj2b = tmp[:4]
+        vk1a, vk1b, vk2a, vk2b = tmp[4:]
+    
+        vj1 = vj1a + vj1b
+        vj2 = vj2a + vj2b
+        vhfa = vj1 - vk1a
+        vhfb = vj1 - vk1b
 
-        vhf = vj1 - vk1 * 0.5
-        vhf[:, p0:p1] += vj2 - vk2 * 0.5
+        vhfa[:, p0:p1] += vj2 - vk2a
+        vhfb[:, p0:p1] += vj2 - vk2b
 
         if chkfile is None:
-            h1ao[ia] = lib.tag_array(
-                vhf + vhf.transpose(0, 2, 1) + hcore_deriv(ia),
-                vj1=vj1, vj2=vj2, vk1=vk1, vk2=vk2
+            h1aoa[ia] = lib.tag_array(
+                vhfa + vhfa.transpose(0, 2, 1) + hcore_deriv(ia),
+                vj1=vj1a, vj2=vj2a, vk1=vk1a, vk2=vk2a
             )
-
+            
+            h1aob[ia] = lib.tag_array(
+                vhfb + vhfb.transpose(0, 2, 1) + hcore_deriv(ia),
+                vj1=vj1b, vj2=vj2b, vk1=vk1b, vk2=vk2b
+            )
         else:
             # for solve_mo1
-            lib.chkfile.save(chkfile, 'scf_f1ao/%d' % ia, vhf + vhf.transpose(0,2,1) + hcore_deriv(ia))
+            lib.chkfile.save(chkfile, 'scf_f1ao/0/%d' % ia, vhfa + vhfa.transpose(0,2,1) + hcore_deriv(ia))
+            lib.chkfile.save(chkfile, 'scf_f1ao/1/%d' % ia, vhfb + vhfb.transpose(0,2,1) + hcore_deriv(ia))
 
             # for loop_vjk
-            lib.chkfile.save(chkfile, 'eph_vj1ao/%d' % ia, vj1)
-            lib.chkfile.save(chkfile, 'eph_vj2ao/%d' % ia, vj2)
-            lib.chkfile.save(chkfile, 'eph_vk1ao/%d' % ia, vk1)
-            lib.chkfile.save(chkfile, 'eph_vk2ao/%d' % ia, vk2)
+            lib.chkfile.save(chkfile, 'eph_vj1ao/0/%d' % ia, vj1a)
+            lib.chkfile.save(chkfile, 'eph_vj2ao/0/%d' % ia, vj2a)
+            lib.chkfile.save(chkfile, 'eph_vk1ao/0/%d' % ia, vk1a)
+            lib.chkfile.save(chkfile, 'eph_vk2ao/0/%d' % ia, vk2a)
 
+            lib.chkfile.save(chkfile, 'eph_vj1ao/1/%d' % ia, vj1b)
+            lib.chkfile.save(chkfile, 'eph_vj2ao/1/%d' % ia, vj2b)
+            lib.chkfile.save(chkfile, 'eph_vk1ao/1/%d' % ia, vk1b)
+            lib.chkfile.save(chkfile, 'eph_vk2ao/1/%d' % ia, vk2b)
     if chkfile is None:
-        return h1ao
+        return (h1aoa, h1aob)
     
     else:
         return chkfile
 
 def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
     log = logger.new_logger(None, log)
-    nao = mo_coeff.shape[0]
 
-    nao, nmo = mo_coeff.shape
-    mask = mo_occ > 0
-    orbo = mo_coeff[:, mask]
-    nocc = orbo.shape[1]
+    mol = eph_obj.mol
+    scf_obj = eph_obj.base
 
-    from pyscf.scf._response_functions import _gen_rhf_response
-    vresp = _gen_rhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
+    nao, nmo = mo_coeff[0].shape
+    ma = mo_occ[0] > 0
+    mb = mo_occ[1] > 0
+
+    orboa = mo_coeff[0][:, ma]
+    orbob = mo_coeff[1][:, mb]
+    nocca = orboa.shape[1]
+    noccb = orbob.shape[1]
+
+    dm0a = numpy.dot(orboa, orboa.T)
+    dm0b = numpy.dot(orbob, orbob.T)
+
+    from pyscf.scf._response_functions import _gen_uhf_response
+    vresp = _gen_uhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
         assert mo1 is not None
         if isinstance(mo1, str):
             assert os.path.exists(mo1), '%s not found' % mo1
-            t1 = lib.chkfile.load(mo1, 'scf_mo1/%d' % ia)
-            t1 = t1.reshape(-1, nao, nocc)
+            t1a = lib.chkfile.load(mo1, 'scf_mo1/0/%d' % ia)
+            t1b = lib.chkfile.load(mo1, 'scf_mo1/1/%d' % ia)
 
         else:
-            t1 = mo1[ia].reshape(-1, nao, nocc)
+            t1a = mo1[0][ia]
+            t1b = mo1[1][ia]
+
+        t1 = (t1a.reshape(-1, nao, nocca), t1b.reshape(-1, nao, noccb))
 
         assert h1ao is not None
         if isinstance(h1ao, str):
             assert os.path.exists(h1ao), '%s not found' % h1ao
-            vj1 = lib.chkfile.load(h1ao, 'eph_vj1ao/%d' % ia)
-            vk1 = lib.chkfile.load(h1ao, 'eph_vk1ao/%d' % ia)
+            vj1a = lib.chkfile.load(h1ao, 'eph_vj1ao/0/%d' % ia)
+            vk1a = lib.chkfile.load(h1ao, 'eph_vk1ao/0/%d' % ia)
+            vj1b = lib.chkfile.load(h1ao, 'eph_vj1ao/1/%d' % ia)
+            vk1b = lib.chkfile.load(h1ao, 'eph_vk1ao/1/%d' % ia)
         
         else:
-            vj1 = h1ao[ia].vj1
-            vk1 = h1ao[ia].vk1
+            h1aoa, h1aob = h1ao
+            vj1a = h1aoa[ia].vj1
+            vk1a = h1aoa[ia].vk1
+
+            vj1b = h1aob[ia].vj1
+            vk1b = h1aob[ia].vk1
 
         assert t1 is not None
         assert vj1 is not None
@@ -120,7 +169,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
     def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
                   fx=None, atmlst=None, max_memory=4000, verbose=None):
-        from pyscf.hessian.rhf import solve_mo1
+        from pyscf.hessian.uhf import solve_mo1
         return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
                          fx, atmlst, max_memory, verbose,
                          max_cycle=self.max_cycle, level_shift=self.level_shift)
