@@ -171,13 +171,6 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     def make_h1(self, mo_coeff, mo_occ, tmpfile=None, atmlst=None, log=None):
         raise NotImplementedError
 
-    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-                  fx=None, atmlst=None, max_memory=4000, verbose=None):
-        from pyscf.hessian.rhf import solve_mo1
-        return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-                         fx, atmlst, max_memory, verbose,
-                         max_cycle=self.max_cycle, level_shift=self.level_shift)
-
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
         if mo_coeff is None: mo_coeff = self.base.mo_coeff
@@ -197,6 +190,14 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
+
+    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+                  fx=None, atmlst=None, max_memory=4000, verbose=None):
+        from pyscf.hessian.rhf import solve_mo1
+        return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+                         fx, atmlst, max_memory, verbose,
+                         max_cycle=self.max_cycle, level_shift=self.level_shift)
+
     
     def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
         return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=log)
