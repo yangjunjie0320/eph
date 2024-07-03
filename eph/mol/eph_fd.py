@@ -152,7 +152,7 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         raise NotImplementedError
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
-    def kernel(self, atmlst=None, stepsize=1e-4, factor=1.0):
+    def kernel(self, atmlst=None, stepsize=1e-4):
         if atmlst is None:
             atmlst = range(self.mol.natm)
 
@@ -162,7 +162,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         xyz = mol.atom_coords()
         aoslices = mol.aoslice_by_atom()
 
-        dm0 = self.base.make_rdm1() * factor
+        dm0 = self.base.make_rdm1()
         nao = dm0.shape[0]
         assert dm0.shape == (nao, nao)
 
@@ -180,19 +180,19 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dxyz[ia, x] = stepsize
 
                 scan_obj(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
-                dm1 = scan_obj.make_rdm1() * factor
+                dm1 = scan_obj.make_rdm1()
                 v1  = scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-                # v1 += scan_obj.get_veff(dm=dm1)
+                v1 += scan_obj.get_veff(dm=dm1)
 
                 scan_obj(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
-                dm2 = scan_obj.make_rdm1() * factor
+                dm2 = scan_obj.make_rdm1()
                 v2  = scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-                # v2 += scan_obj.get_veff(dm=dm2)
+                v2 += scan_obj.get_veff(dm=dm2)
 
                 dv_ia_x = (v1 - v2) / (2 * stepsize)
 
-                # dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
-                # dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
+                dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
+                dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
                 dv.append(dv_ia_x)
 
         nao = self.mol.nao_nr()
@@ -209,7 +209,7 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = 'sto3g' # '631g*'
+    mol.basis = '631g*'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
@@ -229,40 +229,18 @@ if __name__ == '__main__':
     from eph.mol import rhf
     eph_an = rhf.ElectronPhononCoupling(mf)
     dv_an = eph_an.kernel()
-    nao = mol.nao_nr()
 
     # Test the finite difference against the analytic results
     eph_fd = ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
 
-    from pyscf.scf._response_functions import _gen_rhf_response
-    vresp = _gen_rhf_response(mf, mf.mo_coeff, mf.mo_occ, hermi=1)
-
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
         dv_fd = eph_fd.kernel(stepsize=stepsize).reshape(dv_an.shape)
         err = abs(dv_an - dv_fd).max()
-        # print("\nstepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
-        # atmlst = [0, 1]
-        # assert abs(dv_fd[atmlst] - eph_fd.kernel(atmlst=atmlst, stepsize=stepsize)).max() < 1e-6
+        atmlst = [0, 1]
+        assert abs(dv_fd[atmlst] - eph_fd.kernel(atmlst=atmlst, stepsize=stepsize)).max() < 1e-6
 
-        dveff_fd = dv_fd.reshape(-1, nao, nao)
-        dvnuc_fd = eph_fd.kernel(stepsize=stepsize, factor=0.0).reshape(dveff_fd.shape)
-
-        nn = dveff_fd.shape[0]
-        for xx in range(nn):
-            dvnuc_an_xx = dveff_to_dvnuc(dveff_fd[xx], mf_obj=mf)
-            err = abs(dvnuc_an_xx - dvnuc_fd[xx]).max()
-
-            print("\nxx = %2d, stepsize = % 6.4e, error = % 6.4e" % (xx, stepsize, err))
-            numpy.savetxt(mol.stdout, dvnuc_an_xx, fmt='% 12.8f', delimiter=',', header='dvnuc_an_xx')
-            numpy.savetxt(mol.stdout, dvnuc_fd[xx], fmt='% 12.8f', delimiter=',', header='dvnuc_fd')
-
-    assert 1 == 2
-            
-
-
-    # Test the electron-phonon coupling
-    dv = dv_an
     mass = mol.atom_mass_list()
-    res = harmonic_analysis(mol, hess=hess, dv_ao=dv, mass=mass)
+    res = harmonic_analysis(mol, hess=hess, dv_ao=dv_an, mass=mass)
