@@ -164,7 +164,7 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
         vinda, vindb = res.reshape(dm1.shape)
         vinda += vjk1a + vjk1a.transpose(0, 2, 1)
         vindb += vjk1b + vjk1b.transpose(0, 2, 1)
-        return (vinda, vindb)
+        return numpy.asarray((vinda, vindb)).reshape(2, 3, nao, nao)
     
     return func
 
