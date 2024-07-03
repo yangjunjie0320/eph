@@ -53,9 +53,12 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
         veff = veff_deriv(ia)
         dv.append(vnuc + veff)
 
+    dv = numpy.array(dv)
+    print(dv.shape)
+
     return dv
 
-def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
+def make_h1(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, atmlst=None, verbose=None):
     mol = eph_obj.mol
     scf_obj = eph_obj.base
     

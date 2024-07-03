@@ -13,7 +13,7 @@ from eph.mol import eph_fd, rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
     
-def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
+def make_h1(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, atmlst=None, verbose=None):
     mol = eph_obj.mol
     scf_obj = eph_obj.base
 
@@ -101,9 +101,6 @@ def make_h1(eph_obj, mo_coeff, mo_occ, chkfile=None, atmlst=None, verbose=None):
 def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
     log = logger.new_logger(None, log)
 
-    mol = eph_obj.mol
-    scf_obj = eph_obj.base
-
     nao, nmo = mo_coeff[0].shape
     ma = mo_occ[0] > 0
     mb = mo_occ[1] > 0
@@ -161,9 +158,10 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
 
         dm1b = numpy.einsum('xpi,qi->xpq', t1b, orbob)
         dm1b += dm1b.transpose(0, 2, 1)
-        dm1 = numpy.asarray((dm1a, dm1b)).reshape(-1, nao, nao)
+        dm1 = numpy.asarray((dm1a, dm1b))
         
-        vinda, vindb = vresp(dm1)
+        res = vresp(dm1.reshape(-1, nao, nao))
+        vinda, vindb = res.reshape(dm1.shape)
         vinda += vjk1a + vjk1a.transpose(0, 2, 1)
         vindb += vjk1b + vjk1b.transpose(0, 2, 1)
         return (vinda, vindb)
