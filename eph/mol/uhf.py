@@ -163,10 +163,10 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
         dm1b += dm1b.transpose(0, 2, 1)
         dm1 = numpy.asarray((dm1a, dm1b)).reshape(-1, nao, nao)
         
-        va, vb = vresp(dm1)
-        vjk1a += va
-        vjk1b += vb
-        return (vjk1a, vjk1b)
+        vinda, vindb = vresp(dm1)
+        vinda += vjk1a + vjk1a.transpose(0, 2, 1)
+        vindb += vjk1b + vjk1b.transpose(0, 2, 1)
+        return (vinda, vindb)
     
     return func
 
