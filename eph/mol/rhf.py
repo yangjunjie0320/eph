@@ -206,7 +206,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
 
-    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, h1ao_or_chkfile=None,
                         fx=None, atmlst=None, max_memory=4000, verbose=None):
         from pyscf.hessian.rhf import solve_mo1
         return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
