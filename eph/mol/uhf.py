@@ -149,10 +149,10 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
             vj1b = h1aob[ia].vj1
             vk1b = h1aob[ia].vk1
 
-        vj1 = (vj1a, vj1b)
-        vk1 = (vk1a, vk1b)
+        vj1  = vj1a + vj1b
+        vjk1 = (vj1 - vk1a, vj1 - vk1b)
 
-        return t1, vj1 - vk1 * 0.5
+        return t1, vjk1
 
     def func(ia):
         (t1a, t1b), (vjk1a, vjk1b) = load(ia)
