@@ -28,12 +28,17 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     nao, nmo = mo_coeff.shape[-2:]
 
     if h1ao is None:
-        h1ao = eph_obj.make_h1(mo_coeff, mo_occ, eph_obj.chkfile, atmlst, log)
+        h1ao = eph_obj.make_h1(
+            mo_energy, mo_coeff, mo_occ, None,
+            atmlst, verbose=log
+        )
         t1 = log.timer_debug1('making H1', *t0)
 
     if mo1 is None:
-        mo1, mo_e1 = eph_obj.solve_mo1(mo_energy, mo_coeff, mo_occ, h1ao,
-                                       None, atmlst, max_memory, log)
+        mo1, mo_e1 = eph_obj.solve_mo1(
+            mo_energy, mo_coeff, mo_occ, h1ao,
+            atmlst=atmlst, verbose=log
+        )
         t1 = log.timer_debug1('solving MO1', *t1)
 
     vnuc_deriv = eph_obj.gen_vnuc_deriv(mol_obj)
@@ -171,10 +176,10 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
         if mol is None: mol = self.mol
         return gen_vnuc_deriv(mol)
 
-    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
+    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1=None, h1ao=None, log=None):
         raise NotImplementedError
 
-    def make_h1(self, mo_coeff, mo_occ, tmpfile=None, atmlst=None, log=None):
+    def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, tmpfile=None, atmlst=None, log=None):
         raise NotImplementedError
 
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
@@ -198,15 +203,16 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         ElectronPhononCouplingBase.__init__(self, method)
 
     def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-                  fx=None, atmlst=None, max_memory=4000, verbose=None):
+                        fx=None, atmlst=None, max_memory=4000, verbose=None):
         from pyscf.hessian.rhf import solve_mo1
         return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
                          fx, atmlst, max_memory, verbose,
                          max_cycle=self.max_cycle, level_shift=self.level_shift)
 
     
-    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
-        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=log)
+    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
+        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=verbose)
     
     make_h1 = make_h1
     

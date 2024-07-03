@@ -127,8 +127,9 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
             t1b = lib.chkfile.load(mo1, 'scf_mo1/1/%d' % ia)
 
         else:
-            t1a = mo1[0][ia]
-            t1b = mo1[1][ia]
+            mo1a, mo1b = mo1
+            t1a = mo1a[ia]
+            t1b = mo1b[ia]
 
         t1 = (t1a.reshape(-1, nao, nocca), t1b.reshape(-1, nao, noccb))
 
@@ -142,23 +143,30 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
         
         else:
             h1aoa, h1aob = h1ao
+
             vj1a = h1aoa[ia].vj1
             vk1a = h1aoa[ia].vk1
-
             vj1b = h1aob[ia].vj1
             vk1b = h1aob[ia].vk1
 
-        assert t1 is not None
-        assert vj1 is not None
-        assert vk1 is not None
+        vj1 = (vj1a, vj1b)
+        vk1 = (vk1a, vk1b)
 
         return t1, vj1 - vk1 * 0.5
 
     def func(ia):
-        t1, vjk1 = load(ia)
-        dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', t1, orbo)
-        dm1 = dm1 + dm1.transpose(0, 2, 1)
-        return vresp(dm1) + vjk1 + vjk1.transpose(0, 2, 1)
+        (t1a, t1b), (vjk1a, vjk1b) = load(ia)
+        dm1a = numpy.einsum('xpi,qi->xpq', t1a, orboa)
+        dm1a += dm1a.transpose(0, 2, 1)
+
+        dm1b = numpy.einsum('xpi,qi->xpq', t1b, orbob)
+        dm1b += dm1b.transpose(0, 2, 1)
+        dm1 = numpy.asarray((dm1a, dm1b)).reshape(-1, nao, nao)
+        
+        va, vb = vresp(dm1)
+        vjk1a += va
+        vjk1b += vb
+        return (vjk1a, vjk1b)
     
     return func
 
