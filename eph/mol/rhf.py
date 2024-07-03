@@ -10,7 +10,7 @@ from pyscf.scf import hf, _vhf
 from pyscf import hessian
 
 from eph.mol import eph_fd
-from eph.mol.eph_fd import electron_phonon_coupling
+from eph.mol.eph_fd import harmonic_analysis
 
 def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
            h1ao=None, mo1=None, atmlst=None,
@@ -156,43 +156,41 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
     
     return func
 
+# The base for the analytic EPC calculation
 class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     level_shift = 0.0
     max_cycle = 50
-    
-    def _finalize(self):
-        pass
-    
+
     def gen_vnuc_deriv(self, mol=None):
         if mol is None: mol = self.mol
         return gen_vnuc_deriv(mol)
-    
+
     def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
         raise NotImplementedError
-    
+
     def make_h1(self, mo_coeff, mo_occ, tmpfile=None, atmlst=None, log=None):
         raise NotImplementedError
-    
+
     def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
                   fx=None, atmlst=None, max_memory=4000, verbose=None):
         from pyscf.hessian.rhf import solve_mo1
         return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
                          fx, atmlst, max_memory, verbose,
                          max_cycle=self.max_cycle, level_shift=self.level_shift)
-    
+
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
         if mo_coeff is None: mo_coeff = self.base.mo_coeff
         if mo_occ is None: mo_occ = self.base.mo_occ
 
-        self.dump_flags(verbose=self.verbose)
+        self.dump_flags()
         dv = kernel(
             self, mo_energy=mo_energy,
             mo_coeff=mo_coeff, mo_occ=mo_occ,
             atmlst=atmlst, h1ao=None, mo1=None,
         )
 
-        self.dv = dv
+        self.dv_ao = dv
         return dv
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
@@ -245,3 +243,19 @@ if __name__ == '__main__':
         dv_ref = eph_fd.kernel(stepsize=stepsize)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+
+    # Test with the old eph code
+    res = harmonic_analysis(
+        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+    )
+    freq_sol, eph_sol = res["freq"], res["eph"]
+
+    eph_obj = pyscf.eph.EPH(mf)
+    eph_ref, freq_ref = eph_obj.kernel()
+
+    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+        err_freq = abs(freq_sol[i1] - freq_ref[i2])
+        assert abs(freq_sol[i1] - freq_ref[i2]) < 1e-8
+
+        err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
+        assert abs(eph_sol[i1] - eph_ref[i2]).max() < 1e-8
