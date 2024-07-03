@@ -25,7 +25,7 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     if mo_occ    is None: mo_occ    = scf_obj.mo_occ
     if mo_coeff  is None: mo_coeff  = scf_obj.mo_coeff
     if atmlst is None:    atmlst    = range(mol_obj.natm)
-    nao, nmo = mo_coeff.shape
+    nao, nmo = mo_coeff.shape[-2:]
 
     if h1ao is None:
         h1ao = eph_obj.make_h1(mo_coeff, mo_occ, eph_obj.chkfile, atmlst, log)
@@ -42,9 +42,11 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
         mo1=mo1, h1ao=h1ao, log=log
         )
     
-    dv = numpy.zeros((len(atmlst), 3, nao, nao))
+    dv = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
-        dv[i0] = vnuc_deriv(ia) + veff_deriv(ia)
+        vnuc = vnuc_deriv(ia)
+        veff = veff_deriv(ia)
+        dv.append(vnuc + veff)
 
     return dv
 
