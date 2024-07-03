@@ -209,6 +209,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         elif spin == 2:
             dv = numpy.array(dv).reshape(len(atmlst), 3, 2, nao, nao)
+            dv = dv.transpose(0, 2, 1, 3, 4)
 
         self.dv_ao = dv
         return dv
