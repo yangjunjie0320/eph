@@ -165,11 +165,12 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dm0 = self.base.make_rdm1()
         nao = mol.nao_nr()
         dm0 = dm0.reshape(-1, nao, nao)
+        print(dm0.shape)
         spin = dm0.shape[0]
 
         grad_obj = self.base.nuc_grad_method()
         v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
-        assert v0.shape == (-1, 3, nao, nao)
+        assert v0.shape == (spin, 3, nao, nao)
 
         scan_obj = self.base.as_scanner()
 
@@ -203,13 +204,14 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dv.append(dv_ia_x)
 
         nao = self.mol.nao_nr()
+        dv = numpy.array(dv).reshape(-1, nao, nao)
 
-        if spin == 1:
-            dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
+        # if spin == 1:
+        #     dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
 
-        elif spin == 2:
-            dv = numpy.array(dv).reshape(len(atmlst), 3, 2, nao, nao)
-            dv = dv.transpose(0, 2, 1, 3, 4)
+        # elif spin == 2:
+        #     dv = numpy.array(dv).reshape(len(atmlst), 3, 2, nao, nao)
+        #     dv = dv.transpose(0, 2, 1, 3, 4)
 
         self.dv_ao = dv
         return dv

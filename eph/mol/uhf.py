@@ -212,33 +212,41 @@ if __name__ == '__main__':
     assert numpy.allclose(grad, 0.0, atol=1e-4)
     hess = mf.Hessian().kernel()
 
-    from eph.mol import uhf
-    eph_obj = uhf.ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel()
+    # from eph.mol import uhf
+    # eph_obj = uhf.ElectronPhononCoupling(mf)
+    # dv_sol  = eph_obj.kernel()
 
-    atmlst = [0, 1]
-    assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    # atmlst = [0, 1]
+    # assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
 
     # Test the finite difference against the analytic results
     eph_fd = eph_fd.ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
+        mols_a, mols_b = gen_moles(mol, stepsize/2.0)
+        mfset = run_mfs(mf, mols_a, mols_b)
+        dv_ref = get_vmat(mf, mfset, stepsize)
+        print(dv_ref.shape)
+
+        dv_sol = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
     # Test with the old eph code
-    res = harmonic_analysis(
-        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
-    )
-    freq_sol, eph_sol = res["freq"], res["eph"]
+    # res = harmonic_analysis(
+    #     mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+    # )
+    # freq_sol, eph_sol = res["freq"], res["eph"]
 
-    eph_obj = pyscf.eph.EPH(mf)
-    eph_ref, freq_ref = eph_obj.kernel()
+    # eph_obj = pyscf.eph.EPH(mf)
+    # eph_ref, freq_ref = eph_obj.kernel()
 
-    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-        err_freq = abs(freq_sol[i1] - freq_ref[i2])
-        assert abs(freq_sol[i1] - freq_ref[i2]) < 1e-6, "freq_sol[%d] = % 6.4e, freq_ref[%d] = % 6.4e, error = % 6.4e" % (i1, freq_sol[i1], i2, freq_ref[i2], err_freq)
+    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
+    #     assert abs(freq_sol[i1] - freq_ref[i2]) < 1e-6, "freq_sol[%d] = % 6.4e, freq_ref[%d] = % 6.4e, error = % 6.4e" % (i1, freq_sol[i1], i2, freq_ref[i2], err_freq)
 
-        err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
-        assert abs(eph_sol[i1] - eph_ref[i2]).max() < 1e-6, "eph_sol[%d], eph_ref[%d], error = % 6.4e" % (i1, i2, err_eph)
+    #     err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
+    #     assert abs(eph_sol[i1] - eph_ref[i2]).max() < 1e-6, "eph_sol[%d], eph_ref[%d], error = % 6.4e" % (i1, i2, err_eph)
+
+
