@@ -224,9 +224,9 @@ if __name__ == '__main__':
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
         from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
-        mols_a, mols_b = gen_moles(mol, stepsize/2.0)
+        mols_a, mols_b = gen_moles(mol, stepsize)
         mfset = run_mfs(mf, mols_a, mols_b)
-        dv_ref = get_vmat(mf, mfset, stepsize)
+        dv_ref = get_vmat(mf, mfset, stepsize * 2.0)
         print(dv_ref.shape)
 
         dv_sol = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)

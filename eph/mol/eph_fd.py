@@ -199,8 +199,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 for s in range(spin):
                     dv_ia_x[s, p0:p1, :] -= v0[s, x, p0:p1]
                     dv_ia_x[s, :, p0:p1] -= v0[s, x, p0:p1].T
-                # dv_ia_x[p0:p1, :] -= v0[x, p0:p1]
-                # dv_ia_x[:, p0:p1] -= v0[x, p0:p1].T
                 dv.append(dv_ia_x)
 
         nao = self.mol.nao_nr()
