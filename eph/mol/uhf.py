@@ -229,7 +229,9 @@ if __name__ == '__main__':
         dv_ref = get_vmat(mf, mfset, stepsize * 2.0)
         print(dv_ref.shape)
 
-        dv_sol = eph_fd.kernel(stepsize=stepsize).reshape(dv_ref.shape)
+        dv_sol = eph_fd.kernel(stepsize=stepsize)
+        print(dv_sol.shape)
+        
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
