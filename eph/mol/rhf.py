@@ -29,14 +29,17 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
 
     if h1ao is None:
         h1ao = eph_obj.make_h1(
-            mo_energy, mo_coeff, mo_occ, None,
-            atmlst, verbose=log
+            mo_energy=mo_energy,
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            atmlst=atmlst, verbose=log
         )
         t1 = log.timer_debug1('making H1', *t0)
 
     if mo1 is None:
         mo1, mo_e1 = eph_obj.solve_mo1(
-            mo_energy, mo_coeff, mo_occ, h1ao,
+            mo_energy=mo_energy,
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            h1ao_or_chkfile=h1ao,
             atmlst=atmlst, verbose=log
         )
         t1 = log.timer_debug1('solving MO1', *t1)
@@ -185,7 +188,7 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1=None, h1ao=None, log=None):
         raise NotImplementedError
 
-    def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, tmpfile=None, atmlst=None, log=None):
+    def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, atmlst=None, log=None):
         raise NotImplementedError
     
     def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, h1ao_or_chkfile=None,
