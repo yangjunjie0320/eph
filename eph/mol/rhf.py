@@ -51,8 +51,8 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     for i0, ia in enumerate(atmlst):
         dv.append(vnuc_deriv(ia) + veff_deriv(ia))
 
-    dv = numpy.array(dv)
-    print(dv.shape)
+    dv = numpy.array(dv).reshape(len(atmlst), -1, 3, nao, nao)
+    dv = dv.transpose(0, 2, 1, 3, 4).reshape(len(atmlst) * 3, -1, nao, nao)
 
     return dv
 

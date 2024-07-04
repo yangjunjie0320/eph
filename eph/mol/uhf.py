@@ -228,7 +228,7 @@ if __name__ == '__main__':
 
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
-        assert 1 == 2
+        # assert 1 == 2
 
     # Test with the old eph code
     # res = harmonic_analysis(
