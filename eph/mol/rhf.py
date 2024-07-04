@@ -49,10 +49,15 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     
     dv = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
-        dv.append(vnuc_deriv(ia) + veff_deriv(ia))
+        v = vnuc_deriv(ia) + veff_deriv(ia)
+        print(v.shape)
+        dv.append(v)
 
     dv = numpy.array(dv).reshape(len(atmlst), -1, 3, nao, nao)
-    dv = dv.transpose(0, 2, 1, 3, 4).reshape(len(atmlst) * 3, -1, nao, nao)
+    spin = dv.shape[1]
+    assert dv.shape == (len(atmlst), spin, 3, nao, nao)
+
+    dv = dv.transpose(0, 2, 1, 3, 4).reshape(len(atmlst) * 3, spin, nao, nao)
 
     return dv
 

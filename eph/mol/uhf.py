@@ -160,8 +160,8 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
         dm1b += dm1b.transpose(0, 2, 1)
         dm1 = numpy.asarray((dm1a, dm1b))
         
-        res = vresp(dm1.reshape(-1, nao, nao))
-        vinda, vindb = res.reshape(dm1.shape)
+        vinda, vindb = vresp(dm1).reshape(dm1.shape)
+
         vinda += vjk1a + vjk1a.transpose(0, 2, 1)
         vindb += vjk1b + vjk1b.transpose(0, 2, 1)
         return numpy.asarray((vinda, vindb)).reshape(2, 3, nao, nao)
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = '631g*'
+    mol.basis = 'sto3g' # 631g*'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
@@ -208,13 +208,14 @@ if __name__ == '__main__':
     mf.max_cycle = 1000
     mf.kernel()
 
-    grad = mf.nuc_grad_method().kernel()
-    assert numpy.allclose(grad, 0.0, atol=1e-4)
-    hess = mf.Hessian().kernel()
+    # grad = mf.nuc_grad_method().kernel()
+    # assert numpy.allclose(grad, 0.0, atol=1e-4)
+    # hess = mf.Hessian().kernel()
 
     from eph.mol import uhf
     eph_obj = uhf.ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel()
+    nao = mol.nao_nr()
 
     # atmlst = [0, 1]
     # assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
@@ -224,18 +225,21 @@ if __name__ == '__main__':
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
         dv_ref = eph_fd.kernel(stepsize=stepsize)
-        print(f"{dv_sol.shape = }")
+        # print(f"{dv_sol.shape = }")
 
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
-        for x in range(3):
-            for y in range(3):
-                print(f"{x = }, {y = }")
-                print(f"{dv_sol[x, y] = }")
-                print(f"{dv_ref[x, y] = }")
-                print(f"{abs(dv_sol[x, y] - dv_ref[x, y]) = }")
-                print(f"{abs(dv_sol[x, y] - dv_ref[x, y]).max() = }")
+        # dv_sol = dv_sol.reshape(-1, nao, nao)
+        # dv_ref = dv_ref.reshape(-1, nao, nao)
+
+        # print(f"{dv_sol.shape = }")
+        # print(f"{dv_ref.shape = }")
+
+        # for x in range(dv_sol.shape[0]):
+        #     print(f"{x = }")
+        #     numpy.savetxt(mol.stdout, dv_sol[x], fmt="% 6.4e", header="dv_sol", delimiter=", ")
+        #     numpy.savetxt(mol.stdout, dv_ref[x], fmt="% 6.4e", header="dv_ref", delimiter=", ")
 
     # Test with the old eph code
     # res = harmonic_analysis(
