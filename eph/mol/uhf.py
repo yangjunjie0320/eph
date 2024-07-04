@@ -228,7 +228,14 @@ if __name__ == '__main__':
 
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
-        # assert 1 == 2
+
+        for x in range(3):
+            for y in range(3):
+                print(f"{x = }, {y = }")
+                print(f"{dv_sol[x, y] = }")
+                print(f"{dv_ref[x, y] = }")
+                print(f"{abs(dv_sol[x, y] - dv_ref[x, y]) = }")
+                print(f"{abs(dv_sol[x, y] - dv_ref[x, y]).max() = }")
 
     # Test with the old eph code
     # res = harmonic_analysis(
