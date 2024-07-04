@@ -212,9 +212,9 @@ if __name__ == '__main__':
     assert numpy.allclose(grad, 0.0, atol=1e-4)
     hess = mf.Hessian().kernel()
 
-    # from eph.mol import uhf
-    # eph_obj = uhf.ElectronPhononCoupling(mf)
-    # dv_sol  = eph_obj.kernel()
+    from eph.mol import uhf
+    eph_obj = uhf.ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
 
     # atmlst = [0, 1]
     # assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
@@ -223,17 +223,12 @@ if __name__ == '__main__':
     eph_fd = eph_fd.ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
-        mols_a, mols_b = gen_moles(mol, stepsize)
-        mfset = run_mfs(mf, mols_a, mols_b)
-        dv_ref = get_vmat(mf, mfset, stepsize * 2.0)
-        print(dv_ref.shape)
+        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        print(f"{dv_sol.shape = }")
 
-        dv_sol = eph_fd.kernel(stepsize=stepsize)
-        print(dv_sol.shape)
-        
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+        assert 1 == 2
 
     # Test with the old eph code
     # res = harmonic_analysis(

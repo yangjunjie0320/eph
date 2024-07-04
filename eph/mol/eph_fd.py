@@ -165,7 +165,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dm0 = self.base.make_rdm1()
         nao = mol.nao_nr()
         dm0 = dm0.reshape(-1, nao, nao)
-        print(dm0.shape)
         spin = dm0.shape[0]
 
         grad_obj = self.base.nuc_grad_method()
@@ -199,10 +198,11 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 for s in range(spin):
                     dv_ia_x[s, p0:p1, :] -= v0[s, x, p0:p1]
                     dv_ia_x[s, :, p0:p1] -= v0[s, x, p0:p1].T
+
                 dv.append(dv_ia_x)
 
         nao = self.mol.nao_nr()
-        dv = numpy.array(dv).reshape(-1, nao, nao)
+        dv = numpy.array(dv).reshape(-1, spin, nao, nao)
 
         # if spin == 1:
         #     dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
