@@ -195,7 +195,7 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = 'sto3g' # 631g*'
+    mol.basis = '631g*'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
@@ -225,8 +225,6 @@ if __name__ == '__main__':
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
         dv_ref = eph_fd.kernel(stepsize=stepsize)
-        # print(f"{dv_sol.shape = }")
-
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
