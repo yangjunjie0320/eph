@@ -208,17 +208,17 @@ if __name__ == '__main__':
     mf.max_cycle = 1000
     mf.kernel()
 
-    # grad = mf.nuc_grad_method().kernel()
-    # assert numpy.allclose(grad, 0.0, atol=1e-4)
-    # hess = mf.Hessian().kernel()
+    grad = mf.nuc_grad_method().kernel()
+    assert numpy.allclose(grad, 0.0, atol=1e-4)
+    hess = mf.Hessian().kernel()
 
     from eph.mol import uhf
     eph_obj = uhf.ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel()
     nao = mol.nao_nr()
 
-    # atmlst = [0, 1]
-    # assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    atmlst = [0, 1]
+    assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
 
     # Test the finite difference against the analytic results
     eph_fd = eph_fd.ElectronPhononCoupling(mf)
