@@ -173,18 +173,18 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         assert isinstance(method, scf.uhf.UHF)
         ElectronPhononCouplingBase.__init__(self, method)
 
-    def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-                  fx=None, atmlst=None, max_memory=4000, verbose=None):
-        from pyscf.hessian.uhf import solve_mo1
-        return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-                         fx, atmlst, max_memory, verbose,
-                         max_cycle=self.max_cycle, level_shift=self.level_shift)
+    # def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+    #               fx=None, atmlst=None, max_memory=4000, verbose=None):
+    #     from pyscf.hessian.uhf import solve_mo1
+    #     return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
+    #                      fx, atmlst, max_memory, verbose,
+    #                      max_cycle=self.max_cycle, level_shift=self.level_shift)
 
     
     def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
         return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=log)
     
-    make_h1 = make_h1
+    # make_h1 = make_h1
 
 if __name__ == '__main__':
     from pyscf import gto, scf

@@ -257,8 +257,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             mo1=mo1, h1ao=h1ao, verbose=verbose
             )
         return res
-
-    # make_h1 = make_h1
     
 if __name__ == '__main__':
     from pyscf import gto, scf
