@@ -60,8 +60,7 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     spin = dv.shape[1]
     assert dv.shape == (len(atmlst), spin, 3, nao, nao)
 
-    dv = dv.transpose(0, 2, 1, 3, 4).reshape(len(atmlst) * 3, spin, nao, nao)
-
+    dv = dv.transpose(0, 2, 1, 3, 4).reshape(len(atmlst), 3, spin, nao, nao)
     return dv
 
 def make_h1(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, atmlst=None, verbose=None):
@@ -133,8 +132,10 @@ def gen_vnuc_deriv(mol):
 def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
     log = logger.new_logger(None, verbose)
 
-    aoslices = scf_obj.mol.aoslice_by_atom()
+    mol = scf_obj.mol
+    aoslices = mol.aoslice_by_atom()
     nao, nmo = mo_coeff.shape
+    nbas = scf_obj.mol.nbas
 
     mask = mo_occ > 0
     orbo = mo_coeff[:, mask]
@@ -169,9 +170,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
             shls_slice  = (s0, s1) + (0, nbas) * 3
             script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
-            script_dms += ['lk->s1ij', -dm0]           # vj2
             script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
-            script_dms += ['jk->s1il', -dm0]           # vk2
 
             from pyscf.hessian.rhf import _get_jk
             tmp = _get_jk(
@@ -180,9 +179,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
                 shls_slice=shls_slice
             )
 
-            vj1, vj2, vk1, vk2 = tmp
-            vhf = vj1 - vk1 * 0.5
-            vhf[:, p0:p1] += vj2 - vk2 * 0.5
+            vj1, vk1 = tmp
 
         assert t1 is not None
         assert vj1 is not None
@@ -195,7 +192,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', t1, orbo)
         dm1 = dm1 + dm1.transpose(0, 2, 1)
         return vresp(dm1) + vjk1 + vjk1.transpose(0, 2, 1)
-    
+
     return func
 
 # The base for the analytic EPC calculation
@@ -260,6 +257,21 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             mo1=mo1, h1ao=h1ao, verbose=verbose
             )
         return res
+    
+    def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
+        # fix the spin index to make the output consistent with other
+        dv = super().kernel(
+            mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ, atmlst=atmlst
+        )
+
+        natm, _, spin, nao, _ = dv.shape
+
+        assert spin == 1
+        assert dv.shape == (natm, 3, spin, nao, nao)
+
+        dv = dv.reshape(natm, 3, nao, nao)
+        self.dv_ao = dv
+        return dv
     
     # make_h1 = make_h1
     
