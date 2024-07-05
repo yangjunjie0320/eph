@@ -54,9 +54,6 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
     assert hess.shape  == (natm, natm, 3, 3)
     assert dv_ao.shape == (spin, natm, 3, nao, nao)
 
-    if spin == 1:
-        dv_ao = dv_ao[0]
-
     from pyscf.hessian import thermo
     nm = thermo.harmonic_analysis(
         mol, hess, exclude_rot=exclude_rot,
@@ -99,11 +96,15 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
     mode = mode[mask]
 
     eph = numpy.einsum(
-        "axmn,Iax,I,a->Imn", dv_ao, mode,
+        "saxmn,Iax,I,a->sImn", dv_ao, mode,
         1.0 / numpy.sqrt(2 * freq_au),
         1.0 / numpy.sqrt(mass * MP_ME),
         optimize=True
         )
+
+    assert eph.shape == (spin, nmode, nao, nao)
+    if spin == 1:
+        eph = eph.reshape(-1, 3, nao, nao)
 
     res = {}
     for k, v in nm.items():
