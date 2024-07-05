@@ -200,18 +200,11 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     
     return func
 
+# TODO: implement make_h1, save some intermediate results to chkfile
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
         assert isinstance(method, scf.uhf.UHF)
         ElectronPhononCouplingBase.__init__(self, method)
-
-    # def solve_mo1(self, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-    #               fx=None, atmlst=None, max_memory=4000, verbose=None):
-    #     from pyscf.hessian.uhf import solve_mo1
-    #     return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-    #                      fx, atmlst, max_memory, verbose,
-    #                      max_cycle=self.max_cycle, level_shift=self.level_shift)
-
     
     def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
                              scf_obj=None, mo1=None, h1ao=None, verbose=None):
@@ -221,9 +214,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
             mo1=mo1, h1ao=h1ao, verbose=verbose
             )
+        
         return res
-    
-    # make_h1 = make_h1
 
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -268,3 +260,19 @@ if __name__ == '__main__':
         dv_ref = eph_fd.kernel(stepsize=stepsize).reshape(2, -1, 3, nao, nao)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+
+    # Test with the old eph code
+    res = harmonic_analysis(
+        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+    )
+    freq_sol, eph_sol = res["freq"], res["eph"]
+
+    eph_obj = pyscf.eph.EPH(mf)
+    eph_ref, freq_ref = eph_obj.kernel()
+
+    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+        err_freq = abs(freq_sol[i1] - freq_ref[i2])
+        assert err_freq < 1e-6
+
+        err_eph = abs(eph_sol[:, i1] - eph_ref[:, i2]).max()
+        assert err_eph < 1e-6
