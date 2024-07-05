@@ -117,8 +117,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     dm0a = numpy.dot(orboa, orboa.T)
     dm0b = numpy.dot(orbob, orbob.T)
 
-    from pyscf.scf._response_functions import _gen_uhf_response
-    vresp = _gen_uhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
+    vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
         assert mo1 is not None

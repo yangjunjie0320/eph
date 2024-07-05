@@ -141,8 +141,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
 
-    from pyscf.scf._response_functions import _gen_rhf_response
-    vresp = _gen_rhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
+    vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
         assert h1ao is not None
@@ -199,7 +198,6 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     level_shift = 0.0
     max_cycle = 50
-
     max_memory = 4000
 
     def gen_vnuc_deriv(self, mol=None):
