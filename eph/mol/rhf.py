@@ -46,8 +46,8 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
 
     vnuc_deriv = eph_obj.gen_vnuc_deriv(mol_obj)
     veff_deriv = eph_obj.gen_veff_deriv(
-        mo_occ, mo_coeff, scf_obj=scf_obj,
-        mo1=mo1, h1ao=h1ao, log=log
+        mo_energy=mo_energy, mo_coeff=mo_coeff,
+        mo_occ=mo_occ, mo1=mo1, h1ao=h1ao, verbose=log
         )
     
     dv = [] # numpy.zeros((len(atmlst), 3, nao, nao))
@@ -130,14 +130,16 @@ def gen_vnuc_deriv(mol):
         return vrinv + vrinv.transpose(0, 2, 1)
     return func
 
-def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
-    log = logger.new_logger(None, log)
-    nao = mo_coeff.shape[0]
+def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
+    log = logger.new_logger(None, verbose)
 
+    aoslices = scf_obj.mol.aoslice_by_atom()
     nao, nmo = mo_coeff.shape
+
     mask = mo_occ > 0
     orbo = mo_coeff[:, mask]
     nocc = orbo.shape[1]
+    dm0 = numpy.dot(orbo, orbo.T) * 2.0
 
     from pyscf.scf._response_functions import _gen_rhf_response
     vresp = _gen_rhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
@@ -158,9 +160,29 @@ def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None
             vj1 = lib.chkfile.load(h1ao, 'eph_vj1ao/%d' % ia)
             vk1 = lib.chkfile.load(h1ao, 'eph_vk1ao/%d' % ia)
         
-        else:
+        elif hasattr(h1ao[ia], 'vj1'):
             vj1 = h1ao[ia].vj1
             vk1 = h1ao[ia].vk1
+
+        else:
+            s0, s1, p0, p1 = aoslices[ia]
+
+            shls_slice  = (s0, s1) + (0, nbas) * 3
+            script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
+            script_dms += ['lk->s1ij', -dm0]           # vj2
+            script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
+            script_dms += ['jk->s1il', -dm0]           # vk2
+
+            from pyscf.hessian.rhf import _get_jk
+            tmp = _get_jk(
+                mol, 'int2e_ip1', 3, 's2kl',
+                script_dms=script_dms,
+                shls_slice=shls_slice
+            )
+
+            vj1, vj2, vk1, vk2 = tmp
+            vhf = vj1 - vk1 * 0.5
+            vhf[:, p0:p1] += vj2 - vk2 * 0.5
 
         assert t1 is not None
         assert vj1 is not None
@@ -181,19 +203,33 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     level_shift = 0.0
     max_cycle = 50
 
+    max_memory = 4000
+
     def gen_vnuc_deriv(self, mol=None):
         if mol is None: mol = self.mol
         return gen_vnuc_deriv(mol)
 
-    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1=None, h1ao=None, log=None):
+    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
         raise NotImplementedError
 
-    def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, atmlst=None, log=None):
-        raise NotImplementedError
+    def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                      chkfile=None, atmlst=None, verbose=None):
+        res = self.base.Hessian().make_h1(
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            chkfile=chkfile, atmlst=atmlst, 
+            verbose=verbose
+        )
+        return res
     
-    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, h1ao_or_chkfile=None,
-                        fx=None, atmlst=None, max_memory=4000, verbose=None):
-        raise NotImplementedError
+    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                        h1ao_or_chkfile=None, atmlst=None, verbose=None):
+        res = self.base.Hessian().solve_mo1(
+            mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ,
+            h1ao_or_chkfile=h1ao_or_chkfile, atmlst=atmlst,
+            verbose=verbose, max_memory=self.max_memory,
+        )
+        return res
 
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
@@ -215,19 +251,17 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
 
-    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, h1ao_or_chkfile=None,
-                        fx=None, atmlst=None, max_memory=4000, verbose=None):
-        from pyscf.hessian.rhf import solve_mo1
-        return solve_mo1(self.base, mo_energy, mo_coeff, mo_occ, h1ao_or_chkfile,
-                         fx, atmlst, max_memory, verbose,
-                         max_cycle=self.max_cycle, level_shift=self.level_shift)
-
-    
     def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
                              scf_obj=None, mo1=None, h1ao=None, verbose=None):
-        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=verbose)
+        if scf_obj is None: scf_obj = self.base
+
+        res = gen_veff_deriv(
+            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
+            mo1=mo1, h1ao=h1ao, verbose=verbose
+            )
+        return res
     
-    make_h1 = make_h1
+    # make_h1 = make_h1
     
 if __name__ == '__main__':
     from pyscf import gto, scf
