@@ -203,9 +203,9 @@ if __name__ == '__main__':
 
     mol = gto.M()
     mol.atom = '''
-    O       0.0000000000     0.0000000000     0.1146878262
-    H      -0.7540663886    -0.0000000000    -0.4587203947
-    H       0.7540663886    -0.0000000000    -0.4587203947
+    O      -0.0000000000    -0.0000000000     0.1190217807
+    H      -0.7590867860     0.0000000000    -0.4760951386
+    H       0.7590867860     0.0000000000    -0.4760951386
     '''
     mol.basis = '631g*'
     mol.verbose = 0
@@ -218,15 +218,17 @@ if __name__ == '__main__':
     nao = mol.nao_nr()
 
     mf = scf.RKS(mol)
-    mf.xc = "pbe"
+    mf.xc = "pbe0"
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
     mf.max_cycle = 1000
     mf.kernel()
 
-    # grad = mf.nuc_grad_method().kernel()
-    # assert numpy.allclose(grad, 0.0, atol=1e-4)
-    # hess = mf.Hessian().kernel()
+    grad = mf.nuc_grad_method().kernel()
+    print(grad)
+    assert numpy.allclose(grad, 0.0, atol=1e-3)
+    hess = mf.Hessian().kernel()
+    assert 1 == 2
 
     func = gen_veff_deriv(mo_occ=mf.mo_occ, mo_coeff=mf.mo_coeff, scf_obj=mf)
 
