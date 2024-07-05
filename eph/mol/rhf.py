@@ -146,7 +146,10 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     vresp = _gen_rhf_response(scf_obj, mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
+        assert h1ao is not None
         assert mo1 is not None
+
+        t1 = None
         if isinstance(mo1, str):
             assert os.path.exists(mo1), '%s not found' % mo1
             t1 = lib.chkfile.load(mo1, 'scf_mo1/%d' % ia)
@@ -155,7 +158,10 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         else:
             t1 = mo1[ia].reshape(-1, nao, nocc)
 
-        assert h1ao is not None
+        assert t1 is not None
+
+        vj1 = None
+        vk1 = None        
         if isinstance(h1ao, str):
             assert os.path.exists(h1ao), '%s not found' % h1ao
             vj1 = lib.chkfile.load(h1ao, 'eph_vj1ao/%d' % ia)
@@ -165,7 +171,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             vj1 = h1ao[ia].vj1
             vk1 = h1ao[ia].vk1
 
-        else:
+        if vj1 is None or vk1 is None:
             s0, s1, p0, p1 = aoslices[ia]
 
             shls_slice  = (s0, s1) + (0, nbas) * 3
@@ -180,10 +186,6 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             )
 
             vj1, vk1 = tmp
-
-        assert t1 is not None
-        assert vj1 is not None
-        assert vk1 is not None
 
         return t1, vj1 - vk1 * 0.5
 
