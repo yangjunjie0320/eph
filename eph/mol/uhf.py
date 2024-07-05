@@ -168,12 +168,8 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             shls_slice  = (s0, s1) + (0, nbas) * 3
             script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
             script_dms += ['ji->s2kl', -dm0b[:,p0:p1]] # vj1b
-            # script_dms += ['lk->s1ij', -dm0a         ] # vj2a
-            # script_dms += ['lk->s1ij', -dm0b         ] # vj2b
             script_dms += ['li->s1kj', -dm0a[:,p0:p1]] # vk1a
             script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
-            # script_dms += ['jk->s1il', -dm0a         ] # vk2a
-            # script_dms += ['jk->s1il', -dm0b         ] # vk2b
 
             from pyscf.hessian.uhf import _get_jk
             tmp = _get_jk(
@@ -245,6 +241,9 @@ if __name__ == '__main__':
     mol.unit = "AA"
     mol.build()
 
+    natm = mol.natm
+    nao = mol.nao_nr()
+
     mf = scf.UHF(mol)
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
@@ -257,45 +256,15 @@ if __name__ == '__main__':
 
     from eph.mol import uhf
     eph_obj = uhf.ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel()
-    nao = mol.nao_nr()
+    dv_sol  = eph_obj.kernel().reshape(2, -1, 3, nao, nao)
 
     atmlst = [0, 1]
-    assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    assert abs(dv_sol[:, atmlst].reshape(-1, nao, nao) - eph_obj.kernel(atmlst=atmlst).reshape(-1, nao, nao)).max() < 1e-6
 
     # Test the finite difference against the analytic results
     eph_fd = eph_fd.ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        dv_ref = eph_fd.kernel(stepsize=stepsize).reshape(2, -1, 3, nao, nao)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
-
-        # dv_sol = dv_sol.reshape(-1, nao, nao)
-        # dv_ref = dv_ref.reshape(-1, nao, nao)
-
-        # print(f"{dv_sol.shape = }")
-        # print(f"{dv_ref.shape = }")
-
-        # for x in range(dv_sol.shape[0]):
-        #     print(f"{x = }")
-        #     numpy.savetxt(mol.stdout, dv_sol[x], fmt="% 6.4e", header="dv_sol", delimiter=", ")
-        #     numpy.savetxt(mol.stdout, dv_ref[x], fmt="% 6.4e", header="dv_ref", delimiter=", ")
-
-    # Test with the old eph code
-    # res = harmonic_analysis(
-    #     mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
-    # )
-    # freq_sol, eph_sol = res["freq"], res["eph"]
-
-    # eph_obj = pyscf.eph.EPH(mf)
-    # eph_ref, freq_ref = eph_obj.kernel()
-
-    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
-    #     assert abs(freq_sol[i1] - freq_ref[i2]) < 1e-6, "freq_sol[%d] = % 6.4e, freq_ref[%d] = % 6.4e, error = % 6.4e" % (i1, freq_sol[i1], i2, freq_ref[i2], err_freq)
-
-    #     err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
-    #     assert abs(eph_sol[i1] - eph_ref[i2]).max() < 1e-6, "eph_sol[%d], eph_ref[%d], error = % 6.4e" % (i1, i2, err_eph)
-
-

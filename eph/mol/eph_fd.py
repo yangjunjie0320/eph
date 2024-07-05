@@ -164,7 +164,7 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         elif spin == 2:
             dv_ao = dv_ao.reshape(-1, 2, nao, nao)
             dv_ao = numpy.asarray((dv_ao[:, 0], dv_ao[:, 1]))
-            assert dv_ao.shape == (spin, natm, 3, nao, nao)
+            assert dv_ao.shape == (spin, natm * 3, nao, nao)
 
         else:
             raise RuntimeError("spin = %d is not supported" % spin)
