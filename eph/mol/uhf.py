@@ -98,8 +98,8 @@ def make_h1(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, a
     else:
         return chkfile
 
-def gen_veff_deriv(mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
-    log = logger.new_logger(None, log)
+def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
+    verbose = logger.new_logger(None, verbose)
 
     nao, nmo = mo_coeff[0].shape
     ma = mo_occ[0] > 0
@@ -181,8 +181,15 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
     #                      max_cycle=self.max_cycle, level_shift=self.level_shift)
 
     
-    def gen_veff_deriv(self, mo_occ, mo_coeff, scf_obj=None, mo1=None, h1ao=None, log=None):
-        return gen_veff_deriv(mo_occ, mo_coeff, scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, log=log)
+    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
+        if scf_obj is None: scf_obj = self.base
+
+        res = gen_veff_deriv(
+            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
+            mo1=mo1, h1ao=h1ao, verbose=verbose
+            )
+        return res
     
     # make_h1 = make_h1
 
