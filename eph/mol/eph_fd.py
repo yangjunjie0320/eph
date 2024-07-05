@@ -104,7 +104,7 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
 
     assert eph.shape == (spin, nmode, nao, nao)
     if spin == 1:
-        eph = eph.reshape(-1, 3, nao, nao)
+        eph = eph[0]
 
     res = {}
     for k, v in nm.items():
