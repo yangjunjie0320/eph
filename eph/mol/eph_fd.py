@@ -43,15 +43,19 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
     if mass is None:
         mass = mol.atom_mass_list()
 
-    assert hess  is not None
-    assert dv_ao is not None
+
 
     log = logger.new_logger(mol, verbose)
     natm = mol.natm
     nao = mol.nao_nr()
+    dv_ao = numpy.asarray(dv_ao).reshape(-1, natm, 3, nao, nao)
+    spin = dv_ao.shape[0]
 
     assert hess.shape  == (natm, natm, 3, 3)
-    assert dv_ao.shape == (natm, 3, nao, nao)
+    assert dv_ao.shape == (spin, natm, 3, nao, nao)
+
+    if spin == 1:
+        dv_ao = dv_ao[0]
 
     from pyscf.hessian import thermo
     nm = thermo.harmonic_analysis(
