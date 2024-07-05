@@ -99,9 +99,13 @@ def make_h1(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, a
         return chkfile
 
 def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
-    verbose = logger.new_logger(None, verbose)
+    log = logger.new_logger(None, verbose)
 
+    mol = scf_obj.mol
+    aoslices = mol.aoslice_by_atom()
     nao, nmo = mo_coeff[0].shape
+    nbas = mol.nbas
+    
     ma = mo_occ[0] > 0
     mb = mo_occ[1] > 0
 
@@ -118,19 +122,31 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
     def load(ia):
         assert mo1 is not None
+        assert h1ao is not None
+
+        t1a = None
+        t1b = None
+
         if isinstance(mo1, str):
             assert os.path.exists(mo1), '%s not found' % mo1
             t1a = lib.chkfile.load(mo1, 'scf_mo1/0/%d' % ia)
             t1b = lib.chkfile.load(mo1, 'scf_mo1/1/%d' % ia)
+            t1a = t1a.reshape(-1, nao, nocca)
+            t1b = t1b.reshape(-1, nao, noccb)
 
         else:
             mo1a, mo1b = mo1
-            t1a = mo1a[ia]
-            t1b = mo1b[ia]
+            t1a = mo1a[ia].reshape(-1, nao, nocca)
+            t1b = mo1b[ia].reshape(-1, nao, noccb)
 
-        t1 = (t1a.reshape(-1, nao, nocca), t1b.reshape(-1, nao, noccb))
+        assert t1a is not None
+        assert t1b is not None
+        t1 = (t1a, t1b)
 
-        assert h1ao is not None
+        vj1a = None
+        vk1a = None
+        vj1b = None
+        vk1b = None
         if isinstance(h1ao, str):
             assert os.path.exists(h1ao), '%s not found' % h1ao
             vj1a = lib.chkfile.load(h1ao, 'eph_vj1ao/0/%d' % ia)
@@ -138,7 +154,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             vj1b = lib.chkfile.load(h1ao, 'eph_vj1ao/1/%d' % ia)
             vk1b = lib.chkfile.load(h1ao, 'eph_vk1ao/1/%d' % ia)
         
-        else:
+        elif hasattr(h1ao[0][ia], 'vj1'):
             h1aoa, h1aob = h1ao
 
             vj1a = h1aoa[ia].vj1
@@ -146,10 +162,30 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             vj1b = h1aob[ia].vj1
             vk1b = h1aob[ia].vk1
 
-        vj1  = vj1a + vj1b
-        vjk1 = (vj1 - vk1a, vj1 - vk1b)
+        if vj1a is None:
+            s0, s1, p0, p1 = aoslices[ia]
 
-        return t1, vjk1
+            shls_slice  = (s0, s1) + (0, nbas) * 3
+            script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
+            script_dms += ['ji->s2kl', -dm0b[:,p0:p1]] # vj1b
+            # script_dms += ['lk->s1ij', -dm0a         ] # vj2a
+            # script_dms += ['lk->s1ij', -dm0b         ] # vj2b
+            script_dms += ['li->s1kj', -dm0a[:,p0:p1]] # vk1a
+            script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
+            # script_dms += ['jk->s1il', -dm0a         ] # vk2a
+            # script_dms += ['jk->s1il', -dm0b         ] # vk2b
+
+            from pyscf.hessian.uhf import _get_jk
+            tmp = _get_jk(
+                mol, 'int2e_ip1', 3, 's2kl',
+                script_dms=script_dms,
+                shls_slice=shls_slice
+            )
+            
+            vj1a, vj1b, vk1a, vk1b = tmp
+
+        vj1 = vj1a + vj1b
+        return t1, (vj1 - vk1a, vj1 - vk1b)
 
     def func(ia):
         (t1a, t1b), (vjk1a, vjk1b) = load(ia)
