@@ -197,8 +197,8 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
 
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
-        if mo_coeff is None: mo_coeff = self.base.mo_coeff
-        if mo_occ is None: mo_occ = self.base.mo_occ
+        if mo_coeff is None:  mo_coeff = self.base.mo_coeff
+        if mo_occ is None:    mo_occ = self.base.mo_occ
 
         self.dump_flags()
         dv = kernel(
