@@ -50,18 +50,17 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
         mo_occ=mo_occ, mo1=mo1, h1ao=h1ao, verbose=log
         )
     
-    dv = [] # numpy.zeros((len(atmlst), 3, nao, nao))
+    dv_ao = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
         v = vnuc_deriv(ia) + veff_deriv(ia)
-        print(v.shape)
-        dv.append(v)
+        dv_ao.append(v)
 
-    dv = numpy.array(dv).reshape(len(atmlst), -1, 3, nao, nao)
-    spin = dv.shape[1]
-    assert dv.shape == (len(atmlst), spin, 3, nao, nao)
+    dv_ao = numpy.array(dv_ao).reshape(len(atmlst), -1, 3, nao, nao)
+    spin = dv_ao.shape[1]
+    assert dv_ao.shape == (len(atmlst), spin, 3, nao, nao)
 
-    dv = dv.transpose(0, 2, 1, 3, 4).reshape(len(atmlst), 3, spin, nao, nao)
-    return dv
+    dv_ao = dv_ao.transpose(0, 2, 1, 3, 4).reshape(len(atmlst), 3, spin, nao, nao)
+    return dv_ao
 
 def make_h1(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None, chkfile=None, atmlst=None, verbose=None):
     mol = eph_obj.mol
@@ -186,7 +185,6 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             )
 
             vj1, vk1 = tmp
-
         return t1, vj1 - vk1 * 0.5
 
     def func(ia):
@@ -236,14 +234,14 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
         if mo_occ is None:    mo_occ = self.base.mo_occ
 
         self.dump_flags()
-        dv = kernel(
+        dv_ao = kernel(
             self, mo_energy=mo_energy,
             mo_coeff=mo_coeff, mo_occ=mo_occ,
             atmlst=atmlst, h1ao=None, mo1=None,
         )
 
-        self.dv_ao = dv
-        return dv
+        self.dv_ao = self._finalize(dv_ao)
+        return self.dv_ao
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
@@ -259,22 +257,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             mo1=mo1, h1ao=h1ao, verbose=verbose
             )
         return res
-    
-    def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
-        # fix the spin index to make the output consistent with other
-        dv = super().kernel(
-            mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ, atmlst=atmlst
-        )
 
-        natm, _, spin, nao, _ = dv.shape
-
-        assert spin == 1
-        assert dv.shape == (natm, 3, spin, nao, nao)
-
-        dv = dv.reshape(natm, 3, nao, nao)
-        self.dv_ao = dv
-        return dv
-    
     # make_h1 = make_h1
     
 if __name__ == '__main__':
@@ -293,6 +276,9 @@ if __name__ == '__main__':
     mol.unit = "AA"
     mol.build()
 
+    natm = mol.natm
+    nao = mol.nao_nr()
+
     mf = scf.RHF(mol)
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
@@ -305,16 +291,16 @@ if __name__ == '__main__':
 
     from eph.mol import rhf
     eph_obj = rhf.ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel()
+    dv_sol  = eph_obj.kernel().reshape(-1, 3, nao, nao)
 
     atmlst = [0, 1]
-    assert abs(dv_sol[atmlst] - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    assert abs(dv_sol[atmlst].reshape(-1, nao, nao) - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
 
     # Test the finite difference against the analytic results
     eph_fd = eph_fd.ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        dv_ref = eph_fd.kernel(stepsize=stepsize).reshape(-1, 3, nao, nao)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 

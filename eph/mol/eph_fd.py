@@ -147,6 +147,24 @@ class ElectronPhononCouplingBase(lib.StreamObject):
             self.max_memory, lib.current_memory()[0]
         )
         return self
+    
+    def _finalize(self, dv_ao):
+        assert dv_ao is not None
+        natm, _, spin, nao, _ = dv_ao.shape
+        assert dv_ao.shape == (natm, 3, spin, nao, nao)
+
+        if spin == 1:
+            dv_ao = dv_ao.reshape(-1, nao, nao)
+        
+        elif spin == 2:
+            dv_ao = dv_ao.reshape(-1, 2, nao, nao)
+            dv_ao = numpy.asarray((dv_ao[:, 0], dv_ao[:, 1]))
+            assert dv_ao.shape == (spin, natm, 3, nao, nao)
+
+        else:
+            raise RuntimeError("spin = %d is not supported" % spin)
+
+        return dv_ao
 
     def kernel(self):
         raise NotImplementedError
@@ -166,14 +184,16 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         nao = mol.nao_nr()
         dm0 = dm0.reshape(-1, nao, nao)
         spin = dm0.shape[0]
-
-        grad_obj = self.base.nuc_grad_method()
-        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
-        assert v0.shape == (spin, 3, nao, nao)
+        if spin == 1:
+            dm0 = dm0[0]
 
         scan_obj = self.base.as_scanner()
+        grad_obj = self.base.nuc_grad_method()
 
-        dv = []
+        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
+        v0 = v0.reshape(spin, 3, nao, nao)
+
+        dv_ao = []
         for i0, ia in enumerate(atmlst):
             s0, s1, p0, p1 = aoslices[ia]
             for x in range(3):
@@ -182,13 +202,13 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
                 scan_obj(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
                 dm1 = scan_obj.make_rdm1()
-                v1  = scan_obj.get_veff(dm=dm1)
+                v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nao, nao)
                 v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
                 
 
                 scan_obj(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
                 dm2 = scan_obj.make_rdm1()
-                v2  = scan_obj.get_veff(dm=dm2)
+                v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
                 v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
 
                 assert v1.shape == v2.shape == (spin, nao, nao)
@@ -199,20 +219,13 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                     dv_ia_x[s, p0:p1, :] -= v0[s, x, p0:p1]
                     dv_ia_x[s, :, p0:p1] -= v0[s, x, p0:p1].T
 
-                dv.append(dv_ia_x)
+                dv_ao.append(dv_ia_x)
 
         nao = self.mol.nao_nr()
-        dv = numpy.array(dv).reshape(-1, spin, nao, nao)
+        dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nao, nao)
+        self.dv_ao = self._finalize(dv_ao)
 
-        # if spin == 1:
-        #     dv = numpy.array(dv).reshape(len(atmlst), 3, nao, nao)
-
-        # elif spin == 2:
-        #     dv = numpy.array(dv).reshape(len(atmlst), 3, 2, nao, nao)
-        #     dv = dv.transpose(0, 2, 1, 3, 4)
-
-        self.dv_ao = dv
-        return dv
+        return self.dv_ao
 
 if __name__ == '__main__':
     from pyscf import gto, scf
