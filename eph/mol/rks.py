@@ -240,12 +240,23 @@ if __name__ == '__main__':
     eph_obj = rks.ElectronPhononCoupling(mf)
     dv_sol = eph_obj.kernel()
     
-    # hack the original EPH implementation
-    pyscf.eph.rhf._freq_mass_weighted_vec = lambda *args, **kwargs: numpy.eye(args[0].shape[0])
-    eph_obj = pyscf.eph.EPH(mf)
-    dv_ref = eph_obj.kernel()[0]
+    # # hack the original EPH implementation
+    # pyscf.eph.rhf._freq_mass_weighted_vec = lambda *args, **kwargs: numpy.eye(args[0].shape[0])
+    # eph_obj = pyscf.eph.EPH(mf)
+    # dv_ref = eph_obj.kernel()[0]
 
-    print(dv_sol.shape)
-    print(dv_ref.shape)
-    err = abs(dv_sol - dv_ref).max()
-    print("error = % 6.4e" % err)
+    # Test with the old eph code
+    res = harmonic_analysis(
+        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+    )
+    freq_sol, eph_sol = res["freq"], res["eph"]
+
+    eph_obj = pyscf.eph.EPH(mf)
+    eph_ref, freq_ref = eph_obj.kernel()
+
+    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+        err_freq = abs(freq_sol[i1] - freq_ref[i2])
+        assert err_freq < 1e-6, "error = % 6.4e" % err_freq
+
+        err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
+        assert err_eph < 1e-6, "error = % 6.4e" % err_eph
