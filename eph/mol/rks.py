@@ -238,5 +238,14 @@ if __name__ == '__main__':
 
     from eph.mol import rks
     eph_obj = rks.ElectronPhononCoupling(mf)
-    dv_ao = eph_obj.kernel()
-    print(dv_ao.shape)
+    dv_sol = eph_obj.kernel()
+    
+    # hack the original EPH implementation
+    pyscf.eph.rhf._freq_mass_weighted_vec = lambda *args, **kwargs: numpy.eye(args[0].shape[0])
+    eph_obj = pyscf.eph.EPH(mf)
+    dv_ref = eph_obj.kernel()[0]
+
+    print(dv_sol.shape)
+    print(dv_ref.shape)
+    err = abs(dv_sol - dv_sol.transpose(0, 1, 3, 2)).max()
+    print("error = % 6.4e" % err)

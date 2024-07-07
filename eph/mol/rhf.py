@@ -210,6 +210,10 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
 
     def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
                       chkfile=None, atmlst=None, verbose=None):
+        if mo_energy is None: mo_energy = self.base.mo_energy
+        if mo_coeff is None:  mo_coeff = self.base.mo_coeff
+        if mo_occ is None:    mo_occ = self.base.mo_occ
+        
         res = self.base.Hessian().make_h1(
             mo_coeff=mo_coeff, mo_occ=mo_occ,
             chkfile=chkfile, atmlst=atmlst, 
@@ -219,6 +223,10 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
     
     def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
                         h1ao_or_chkfile=None, atmlst=None, verbose=None):
+        if mo_energy is None: mo_energy = self.base.mo_energy
+        if mo_coeff is None:  mo_coeff = self.base.mo_coeff
+        if mo_occ is None:    mo_occ = self.base.mo_occ
+
         res = self.base.Hessian().solve_mo1(
             mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ,
             h1ao_or_chkfile=h1ao_or_chkfile, atmlst=atmlst,
