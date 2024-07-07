@@ -256,7 +256,9 @@ if __name__ == '__main__':
 
     for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
         err_freq = abs(freq_sol[i1] - freq_ref[i2])
+        print("err_freq = % 6.4e" % err_freq)
         assert err_freq < 1e-6, "error = % 6.4e" % err_freq
 
         err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
+        print("err_eph = % 6.4e" % err_eph)
         assert err_eph < 1e-6, "error = % 6.4e" % err_eph
