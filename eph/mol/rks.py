@@ -18,7 +18,10 @@ from eph.mol import eph_fd, rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
 
-def gen_vxc_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, max_memory=2000, verbose=None):
+def _get_vxc_deriv1(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, max_memory=2000, verbose=None):
+    log = logger.new_logger(None, verbose)
+    t0 = (logger.process_clock(), logger.perf_counter())
+
     # information from mol object
     mol = scf_obj.mol
     natm = mol.natm
@@ -86,6 +89,7 @@ def gen_vxc_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, max_
     elif xctype == 'MGGA':
         raise NotImplementedError('meta-GGA')
 
+    t1 = log.timer_debug1('vxc', *t0)
     return -(vmat + vmat.transpose(0, 1, 3, 2))
 
 def gen_veff_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1=None, verbose=None):
@@ -101,7 +105,7 @@ def gen_veff_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
 
-    vxc_deriv = gen_vxc_deriv(
+    dvxc = _get_vxc_deriv1(
         mo_energy=mo_energy, mo_coeff=mo_coeff, 
         mo_occ=mo_occ,  scf_obj=scf_obj, 
         max_memory=2000, verbose=verbose
