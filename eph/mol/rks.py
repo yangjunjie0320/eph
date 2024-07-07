@@ -206,7 +206,8 @@ if __name__ == '__main__':
     assert numpy.allclose(grad, 0.0, atol=1e-3)
     hess = mf.Hessian().kernel()
 
-    func = gen_veff_deriv(mo_occ=mf.mo_occ, mo_coeff=mf.mo_coeff, scf_obj=mf)
+
+    func = gen_veff_deriv(mo_occ=mf.mo_occ, mo_coeff=mf.mo_coeff, scf_obj=mf, verbose=0)
 
     for ia in range(natm):
         dv = func(ia)
