@@ -213,7 +213,7 @@ class ElectronPhononCouplingBase(eph_fd.ElectronPhononCouplingBase):
         if mo_energy is None: mo_energy = self.base.mo_energy
         if mo_coeff is None:  mo_coeff = self.base.mo_coeff
         if mo_occ is None:    mo_occ = self.base.mo_occ
-        
+
         res = self.base.Hessian().make_h1(
             mo_coeff=mo_coeff, mo_occ=mo_occ,
             chkfile=chkfile, atmlst=atmlst, 
@@ -321,7 +321,9 @@ if __name__ == '__main__':
 
     for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
         err_freq = abs(freq_sol[i1] - freq_ref[i2])
-        assert err_freq < 1e-6
+        print("err_freq = % 6.4e" % err_freq)
+        assert err_freq < 1e-6, "error = % 6.4e" % err_freq
 
         err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
-        assert err_eph < 1e-6
+        print("err_eph = % 6.4e" % err_eph)
+        assert err_eph < 1e-6, "error = % 6.4e" % err_eph
