@@ -1,5 +1,6 @@
 import os, numpy, scipy, tempfile
 
+import eph.mol
 import pyscf
 from pyscf import lib, scf, dft
 import pyscf.eph
@@ -18,7 +19,7 @@ from eph.mol import eph_fd, rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
 
-def _get_vxc_deriv1(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, max_memory=2000, verbose=None):
+def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, verbose=None):
     log = logger.new_logger(None, verbose)
     t0 = (logger.process_clock(), logger.perf_counter())
 
@@ -92,7 +93,7 @@ def _get_vxc_deriv1(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, ma
     t1 = log.timer_debug1('vxc', *t0)
     return -(vmat + vmat.transpose(0, 1, 3, 2))
 
-def gen_veff_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1=None, verbose=None):
+def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
     log = logger.new_logger(None, verbose)
 
     mol = scf_obj.mol
@@ -105,9 +106,9 @@ def gen_veff_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
 
-    dvxc = _get_vxc_deriv1(
-        mo_energy=mo_energy, mo_coeff=mo_coeff, 
-        mo_occ=mo_occ,  scf_obj=scf_obj, 
+    vxc1 = _get_vxc_deriv(
+        mo_coeff=mo_coeff, mo_occ=mo_occ,
+        scf_obj=scf_obj,
         max_memory=2000, verbose=verbose
         )
 
@@ -182,9 +183,28 @@ def gen_veff_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1
         t1, vjk1 = load(ia)
         dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', t1, orbo)
         dm1 = dm1 + dm1.transpose(0, 2, 1)
-        return vresp(dm1) + vjk1 + vjk1.transpose(0, 2, 1) + dvxc[ia]
+        veff1 = vjk1 + vjk1.transpose(0, 2, 1) + vxc1[ia]
+        return vresp(dm1) + veff1
 
     return func
+
+class ElectronPhononCoupling(ElectronPhononCouplingBase):
+    def __init__(self, method):
+        assert isinstance(method, scf.rks.RKS)
+        ElectronPhononCouplingBase.__init__(self, method)
+        self.grids = method.grids
+        self.grid_response = False
+
+    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
+        if scf_obj is None: scf_obj = self.base
+
+        res = gen_veff_deriv(
+            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
+            mo1=mo1, h1ao=h1ao, verbose=verbose
+            )
+        
+        return res
     
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -216,7 +236,14 @@ if __name__ == '__main__':
     assert numpy.allclose(grad, 0.0, atol=1e-3)
     hess = mf.Hessian().kernel()
 
-
+    from eph.mol import rks
+    eph_obj = rks.ElectronPhononCoupling(mf)
+    h1ao = eph_obj.make_h1(
+        mo_energy=mf.mo_energy, 
+        mo_coeff=mf.mo_coeff, 
+        mo_occ=mf.mo_occ,
+        atmlst=range(natm), verbose=666
+        )
     func = gen_veff_deriv(mo_occ=mf.mo_occ, mo_coeff=mf.mo_coeff, scf_obj=mf, verbose=0)
 
     for ia in range(natm):
