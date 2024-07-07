@@ -113,8 +113,8 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         )
 
     # DFT functional info
-    ni = mf._numint
-    xc = mf.xc
+    ni = scf_obj._numint
+    xc = scf_obj.xc
     ni.libxc.test_deriv_order(xc, 2, raise_error=True)
     omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=mol.spin)
     is_hybrid = ni.libxc.is_hybrid_xc(xc)
@@ -190,7 +190,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
-        assert isinstance(method, scf.rks.RKS)
+        assert isinstance(method, pyscf.dft.rks.RKS)
         ElectronPhononCouplingBase.__init__(self, method)
         self.grids = method.grids
         self.grid_response = False
@@ -238,14 +238,5 @@ if __name__ == '__main__':
 
     from eph.mol import rks
     eph_obj = rks.ElectronPhononCoupling(mf)
-    h1ao = eph_obj.make_h1(
-        mo_energy=mf.mo_energy, 
-        mo_coeff=mf.mo_coeff, 
-        mo_occ=mf.mo_occ,
-        atmlst=range(natm), verbose=666
-        )
-    func = gen_veff_deriv(mo_occ=mf.mo_occ, mo_coeff=mf.mo_coeff, scf_obj=mf, verbose=0)
-
-    for ia in range(natm):
-        dv = func(ia)
-        print(dv.shape)
+    dv_ao = eph_obj.kernel()
+    print(dv_ao.shape)
