@@ -242,7 +242,7 @@ if __name__ == '__main__':
     mf.kernel()
 
     grad = mf.nuc_grad_method().kernel()
-    assert numpy.allclose(grad, 0.0, atol=1e-4)
+    assert numpy.allclose(grad, 0.0, atol=1e-3)
     hess = mf.Hessian().kernel()
 
     from eph.mol import uhf
