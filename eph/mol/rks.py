@@ -247,5 +247,5 @@ if __name__ == '__main__':
 
     print(dv_sol.shape)
     print(dv_ref.shape)
-    err = abs(dv_sol - dv_sol).max()
+    err = abs(dv_sol - dv_ref).max()
     print("error = % 6.4e" % err)
