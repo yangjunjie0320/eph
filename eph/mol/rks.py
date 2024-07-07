@@ -18,7 +18,7 @@ from eph.mol import eph_fd, rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
 
-def _get_vxc_deriv1(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, max_memory=2000, verbose=None):
+def gen_vxc_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, max_memory=2000, verbose=None):
     # information from mol object
     mol = scf_obj.mol
     natm = mol.natm
@@ -88,7 +88,7 @@ def _get_vxc_deriv1(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, ma
 
     return -(vmat + vmat.transpose(0, 1, 3, 2))
 
-def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
+def gen_veff_deriv(mo_energy=None, mo_coeff=None, mo_occ=None, scf_obj=None, mo1=None, verbose=None):
     log = logger.new_logger(None, verbose)
 
     mol = scf_obj.mol
@@ -101,6 +101,12 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
 
+    vxc_deriv = gen_vxc_deriv(
+        mo_energy=mo_energy, mo_coeff=mo_coeff, 
+        mo_occ=mo_occ,  scf_obj=scf_obj, 
+        max_memory=2000, verbose=verbose
+        )
+
     # DFT functional info
     ni = mf._numint
     xc = mf.xc
@@ -109,7 +115,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     is_hybrid = ni.libxc.is_hybrid_xc(xc)
 
     vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
-    dvxc = _get_vxc_deriv1(mo_coeff, mo_occ, 2000)
+    
 
     def load(ia):
         assert h1ao is not None
