@@ -244,12 +244,20 @@ if __name__ == '__main__':
     
     # hack the original EPH implementation
     # pyscf.eph.rhf._freq_mass_weighted_vec = lambda *args, **kwargs: numpy.eye(args[0].shape[0])
-    # eph_obj = pyscf.eph.EPH(mf)
-    # dv_ref = eph_obj.kernel()[0]
-    
-    # dv_err = abs(dv_sol - dv_ref).max()
-    # print("dv_err = % 6.4e" % dv_err)
-    # assert 1 == 2
+    eph_obj = pyscf.eph.EPH(mf)
+    from pyscf.eph.rhf import MP_ME
+    dv_ref = eph_obj.get_eph(
+        hess_obj.chkfile, 
+        numpy.einsum("i,j->ji", 0.5 * numpy.ones(3), 1 / mol.atom_mass_list() / MP_ME).flatten(), 
+        numpy.eye(3 * natm), mo_rep=False
+        )
+
+    err = abs(dv_sol - dv_ref).max()
+    print("err = % 6.4e" % err)
+
+    omega, vec = eph_obj.get_mode(mol, hess)
+    freq_ref = omega
+    eph_ref  = eph_obj.get_eph(hess_obj.chkfile, omega, vec, mo_rep=False)
 
     # Test with the old eph code
     res = harmonic_analysis(
@@ -257,13 +265,8 @@ if __name__ == '__main__':
     )
     freq_sol, eph_sol = res["freq"], res["eph"]
 
-    eph_obj = pyscf.eph.EPH(mf)
-    omega, vec = eph_obj.get_mode(mol, hess)
-    freq_ref = omega
-    eph_ref = eph_obj.get_eph(hess_obj.chkfile, omega, vec, mo_rep=False)
-    # eph_ref, freq_ref = eph_obj.kernel()
-    # print(eph_obj.kernel)
-    # assert 1 == 2
+    print(vec)
+    print(res["norm_mode"].reshape(-1, 3))
 
     # print("freq_sol = ", freq_sol)
     # print("freq_ref = ", freq_ref)
@@ -271,10 +274,10 @@ if __name__ == '__main__':
     # print("eph_sol = ", eph_sol)
     # print("eph_ref = ", eph_ref)
 
-    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-        err_freq = abs(freq_sol[i1] - freq_ref[i2])
-        print("\n\nerr_freq = % 6.4e" % err_freq)
-        # assert err_freq < 1e-6, "error = % 6.4e" % err_freq
+    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
+    #     print("\n\nerr_freq = % 6.4e" % err_freq)
+    #     # assert err_freq < 1e-6, "error = % 6.4e" % err_freq
 
-        err_eph = abs(eph_sol[i1] + eph_ref[i2]).max()
-        print("err_eph = % 6.4e" % err_eph)
+    #     err_eph = abs(eph_sol[i1] + eph_ref[i2]).max()
+    #     print("err_eph = % 6.4e" % err_eph)
