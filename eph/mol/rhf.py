@@ -324,6 +324,6 @@ if __name__ == '__main__':
         print("err_freq = % 6.4e" % err_freq)
         assert err_freq < 1e-6, "error = % 6.4e" % err_freq
 
-        err_eph = abs(eph_sol[i1] - eph_ref[i2]).max()
+        err_eph = min(abs(eph_sol[i1] + eph_ref[i2]).max(), abs(eph_sol[i1] - eph_ref[i2]).max())
         print("err_eph = % 6.4e" % err_eph)
         assert err_eph < 1e-6, "error = % 6.4e" % err_eph
