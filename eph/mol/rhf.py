@@ -293,37 +293,39 @@ if __name__ == '__main__':
 
     grad = mf.nuc_grad_method().kernel()
     assert numpy.allclose(grad, 0.0, atol=1e-3)
-    hess = mf.Hessian().kernel()
 
-    from eph.mol import rhf
-    eph_obj = rhf.ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel().reshape(-1, 3, nao, nao)
+    hess_obj = mf.Hessian()
+    hess_obj.chkfile = mf.chkfile
+    hess = hess_obj.kernel()
 
-    atmlst = [0, 1]
-    assert abs(dv_sol[atmlst].reshape(-1, nao, nao) - eph_obj.kernel(atmlst=atmlst)).max() < 1e-6
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol = eph_obj.kernel()
+    
+    eph_obj = pyscf.eph.EPH(mf)
+    from pyscf.eph.rhf import MP_ME
+    # hack the original EPH implementation
+    xx = numpy.einsum("i,j->ij", 0.5 * numpy.ones(3), 1 / mol.atom_mass_list() / MP_ME).flatten()
+    yy = numpy.eye(3 * natm)
+    dv_ref = eph_obj.get_eph(hess_obj.chkfile,  xx, yy, mo_rep=False)
+    err = abs(dv_sol - dv_ref).max()
+    print("err = % 6.4e" % err)
 
-    # Test the finite difference against the analytic results
-    eph_fd = eph_fd.ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_ref = eph_fd.kernel(stepsize=stepsize).reshape(-1, 3, nao, nao)
-        err = abs(dv_sol - dv_ref).max()
-        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+    freq_ref, mode_ref = eph_obj.get_mode(mol, hess)
+    eph_ref = eph_obj.get_eph(hess_obj.chkfile, freq_ref, mode_ref, mo_rep=False)
 
     # Test with the old eph code
     res = harmonic_analysis(
-        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list(),
+        exclude_rot=False, exclude_trans=False,
     )
     freq_sol, eph_sol = res["freq"], res["eph"]
 
-    eph_obj = pyscf.eph.EPH(mf)
-    eph_ref, freq_ref = eph_obj.kernel()
-
     for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
         err_freq = abs(freq_sol[i1] - freq_ref[i2])
-        print("err_freq = % 6.4e" % err_freq)
+        print("\n\nerr_freq = % 6.4e" % err_freq)
         assert err_freq < 1e-6, "error = % 6.4e" % err_freq
 
-        err_eph = min(abs(eph_sol[i1] + eph_ref[i2]).max(), abs(eph_sol[i1] - eph_ref[i2]).max())
+        err_eph = abs(eph_sol[i1]) - abs(eph_ref[i2])
+        err_eph = abs(err_eph).max()
         print("err_eph = % 6.4e" % err_eph)
         assert err_eph < 1e-6, "error = % 6.4e" % err_eph
