@@ -92,11 +92,10 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
     mode = mode[mask]
     nmode = len(freq_au)
 
-    vec = numpy.einsum("Iax,I,a->Iax", mode, 1.0 / numpy.sqrt(2 * freq_au), 1.0 / numpy.sqrt(mass * MP_ME))
-    # print("vec = \n", vec.reshape(nmode, -1).T)
-
     eph = numpy.einsum(
-        "saxmn,Iax->sImn", dv_ao, vec,
+        "saxmn,Iax,I,a->sImn", dv_ao, mode,
+        1.0 / numpy.sqrt(2 * freq_au),
+        1.0 / numpy.sqrt(mass * MP_ME),
         optimize=True
         )
 
