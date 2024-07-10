@@ -255,29 +255,38 @@ if __name__ == '__main__':
     err = abs(dv_sol - dv_ref).max()
     print("err = % 6.4e" % err)
 
+    mol.verbose = 5
     omega, vec = eph_obj.get_mode(mol, hess)
     freq_ref = omega
     eph_ref  = eph_obj.get_eph(hess_obj.chkfile, omega, vec, mo_rep=False)
 
+    v1 = vec
+    print("omega = ", omega)
+    v_dot_v = numpy.einsum("xi,xj->ij", v1, v1)
+    print("v1 = \n", v1)
+
     # Test with the old eph code
     res = harmonic_analysis(
-        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list(),
+        exclude_rot=False, exclude_trans=False,
+
     )
     freq_sol, eph_sol = res["freq"], res["eph"]
 
-    print(vec)
-    print(res["norm_mode"].reshape(-1, 3))
+    print("freq_sol = ", freq_sol)
+    print("freq_ref = ", freq_ref)
 
-    # print("freq_sol = ", freq_sol)
-    # print("freq_ref = ", freq_ref)
+    print("eph_sol = ", eph_sol.shape)
+    print("eph_ref = ", eph_ref.shape)
 
-    # print("eph_sol = ", eph_sol)
-    # print("eph_ref = ", eph_ref)
+    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+        err_freq = abs(freq_sol[i1] - freq_ref[i2])
+        print("\n\nerr_freq = % 6.4e" % err_freq)
+        # assert err_freq < 1e-6, "error = % 6.4e" % err_freq
 
-    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
-    #     print("\n\nerr_freq = % 6.4e" % err_freq)
-    #     # assert err_freq < 1e-6, "error = % 6.4e" % err_freq
+        err_eph = abs(eph_sol[i1]) - abs(eph_ref[i2])
+        err_eph = abs(err_eph).max()
+        print("err_eph = % 6.4e" % err_eph)
 
-    #     err_eph = abs(eph_sol[i1] + eph_ref[i2]).max()
-    #     print("err_eph = % 6.4e" % err_eph)
+        numpy.savetxt(mol.stdout, eph_sol[i1], fmt="% 6.4e", delimiter=", ", header="eph_sol")
+        numpy.savetxt(mol.stdout, eph_ref[i2], fmt="% 6.4e", delimiter=", ", header="eph_ref")

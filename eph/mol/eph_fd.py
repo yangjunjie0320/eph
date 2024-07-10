@@ -43,8 +43,6 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
     if mass is None:
         mass = mol.atom_mass_list()
 
-
-
     log = logger.new_logger(mol, verbose)
     natm = mol.natm
     nao = mol.nao_nr()
@@ -89,20 +87,21 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
         else:
             log.info('mode %3d: %18s cm^-1', imode, f)
 
-    # sort the mask
-    mask = mask[numpy.argsort(freq_au[mask].real)[::-1]]
     freq_au = freq_au[mask]
     freq_wn = freq_wn[mask]
     mode = mode[mask]
+    nmode = len(freq_au)
+
+    vec = numpy.einsum("Iax,I,a->Iax", mode, 1.0 / numpy.sqrt(2 * freq_au), 1.0 / numpy.sqrt(mass * MP_ME))
+    # print("vec = \n", vec.reshape(nmode, -1).T)
 
     eph = numpy.einsum(
-        "saxmn,Iax,I,a->sImn", dv_ao, mode,
-        1.0 / numpy.sqrt(2 * freq_au),
-        1.0 / numpy.sqrt(mass * MP_ME),
+        "saxmn,Iax->sImn", dv_ao, vec,
         optimize=True
         )
 
-    assert eph.shape == (spin, nmode, nao, nao)
+    eph = eph.reshape(spin, -1, nao, nao)
+
     if spin == 1:
         eph = eph[0]
 
@@ -113,7 +112,7 @@ def harmonic_analysis(mol, hess=None, dv_ao=None, mass=None,
         res[k] = v[mask]
 
     res["eph"] = eph
-    res["freq"] = freq
+    res["freq"] = freq_au
  
     return res
 
