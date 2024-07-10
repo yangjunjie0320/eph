@@ -260,11 +260,6 @@ if __name__ == '__main__':
     freq_ref = omega
     eph_ref  = eph_obj.get_eph(hess_obj.chkfile, omega, vec, mo_rep=False)
 
-    v1 = vec
-    print("omega = ", omega)
-    v_dot_v = numpy.einsum("xi,xj->ij", v1, v1)
-    print("v1 = \n", v1)
-
     # Test with the old eph code
     res = harmonic_analysis(
         mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list(),
@@ -272,12 +267,6 @@ if __name__ == '__main__':
 
     )
     freq_sol, eph_sol = res["freq"], res["eph"]
-
-    print("freq_sol = ", freq_sol)
-    print("freq_ref = ", freq_ref)
-
-    print("eph_sol = ", eph_sol.shape)
-    print("eph_ref = ", eph_ref.shape)
 
     for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
         err_freq = abs(freq_sol[i1] - freq_ref[i2])
