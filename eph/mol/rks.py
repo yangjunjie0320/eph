@@ -256,4 +256,3 @@ if __name__ == '__main__':
         dv_ref = eph_fd.kernel(stepsize=stepsize)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
-        

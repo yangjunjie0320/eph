@@ -257,18 +257,3 @@ if __name__ == '__main__':
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
-    # Test with the old eph code
-    # res = harmonic_analysis(
-    #     mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
-    # )
-    # freq_sol, eph_sol = res["freq"], res["eph"]
-
-    # eph_obj = pyscf.eph.EPH(mf)
-    # eph_ref, freq_ref = eph_obj.kernel()
-
-    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
-    #     assert err_freq < 1e-6
-
-    #     err_eph = abs(eph_sol[:, i1] - eph_ref[:, i2]).max()
-    #     assert err_eph < 1e-6
