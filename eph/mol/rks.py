@@ -242,40 +242,18 @@ if __name__ == '__main__':
     eph_obj = rks.ElectronPhononCoupling(mf)
     dv_sol = eph_obj.kernel()
     
-    # hack the original EPH implementation
-    # pyscf.eph.rhf._freq_mass_weighted_vec = lambda *args, **kwargs: numpy.eye(args[0].shape[0])
-    eph_obj = pyscf.eph.EPH(mf)
-    from pyscf.eph.rhf import MP_ME
-    dv_ref = eph_obj.get_eph(
-        hess_obj.chkfile, 
-        numpy.einsum("i,j->ji", 0.5 * numpy.ones(3), 1 / mol.atom_mass_list() / MP_ME).flatten(), 
-        numpy.eye(3 * natm), mo_rep=False
-        )
+    grad = mf.nuc_grad_method().kernel()
+    assert numpy.allclose(grad, 0.0, atol=1e-3)
+    hess = mf.Hessian().kernel()
 
-    err = abs(dv_sol - dv_ref).max()
-    print("err = % 6.4e" % err)
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
 
-    mol.verbose = 5
-    omega, vec = eph_obj.get_mode(mol, hess)
-    freq_ref = omega
-    eph_ref  = eph_obj.get_eph(hess_obj.chkfile, omega, vec, mo_rep=False)
-
-    # Test with the old eph code
-    res = harmonic_analysis(
-        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list(),
-        exclude_rot=False, exclude_trans=False,
-
-    )
-    freq_sol, eph_sol = res["freq"], res["eph"]
-
-    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-        err_freq = abs(freq_sol[i1] - freq_ref[i2])
-        print("\n\nerr_freq = % 6.4e" % err_freq)
-        # assert err_freq < 1e-6, "error = % 6.4e" % err_freq
-
-        err_eph = abs(eph_sol[i1]) - abs(eph_ref[i2])
-        err_eph = abs(err_eph).max()
-        print("err_eph = % 6.4e" % err_eph)
-
-        numpy.savetxt(mol.stdout, eph_sol[i1], fmt="% 6.4e", delimiter=", ", header="eph_sol")
-        numpy.savetxt(mol.stdout, eph_ref[i2], fmt="% 6.4e", delimiter=", ", header="eph_ref")
+    # Test the finite difference against the analytic results
+    eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
+        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        err = abs(dv_sol - dv_ref).max()
+        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+        
