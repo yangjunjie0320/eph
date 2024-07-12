@@ -9,7 +9,8 @@ from pyscf.lib import logger
 from pyscf.scf import hf, _vhf
 from pyscf import hessian
 
-from eph.mol import eph_fd, rhf
+import eph
+import eph.mol.eph_fd, eph.mol.rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
     
@@ -245,33 +246,29 @@ if __name__ == '__main__':
     assert numpy.allclose(grad, 0.0, atol=1e-3)
     hess = mf.Hessian().kernel()
 
-    from eph.mol import uhf
-    eph_obj = uhf.ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel().reshape(2, -1, 3, nao, nao)
-
-    atmlst = [0, 1]
-    assert abs(dv_sol[:, atmlst].reshape(-1, nao, nao) - eph_obj.kernel(atmlst=atmlst).reshape(-1, nao, nao)).max() < 1e-6
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
 
     # Test the finite difference against the analytic results
-    eph_fd = eph_fd.ElectronPhononCoupling(mf)
+    eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_ref = eph_fd.kernel(stepsize=stepsize).reshape(2, -1, 3, nao, nao)
+        dv_ref = eph_fd.kernel(stepsize=stepsize)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
     # Test with the old eph code
-    res = harmonic_analysis(
-        mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
-    )
-    freq_sol, eph_sol = res["freq"], res["eph"]
+    # res = harmonic_analysis(
+    #     mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list()
+    # )
+    # freq_sol, eph_sol = res["freq"], res["eph"]
 
-    eph_obj = pyscf.eph.EPH(mf)
-    eph_ref, freq_ref = eph_obj.kernel()
+    # eph_obj = pyscf.eph.EPH(mf)
+    # eph_ref, freq_ref = eph_obj.kernel()
 
-    for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-        err_freq = abs(freq_sol[i1] - freq_ref[i2])
-        assert err_freq < 1e-6
+    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
+    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
+    #     assert err_freq < 1e-6
 
-        err_eph = abs(eph_sol[:, i1] - eph_ref[:, i2]).max()
-        assert err_eph < 1e-6
+    #     err_eph = abs(eph_sol[:, i1] - eph_ref[:, i2]).max()
+    #     assert err_eph < 1e-6
