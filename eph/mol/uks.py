@@ -4,15 +4,18 @@ import eph.mol
 import pyscf
 from pyscf import lib, scf, dft
 import pyscf.eph
+from pyscf.gto.mole import is_au
 import pyscf.hessian
-
 from pyscf.lib import logger
-from pyscf.dft import numint
+from pyscf.scf import hf, _vhf
+from pyscf import hessian
+
 from pyscf.grad import rks as rks_grad
-from pyscf.hessian.rks import _make_dR_rho1
+from pyscf.dft import numint, gen_grid
+from pyscf.hessian.rks import _make_dR_rho1, _check_mgga_grids
 
 import eph
-from eph.mol import eph_fd, rhf
+from eph.mol import eph_fd, uhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 from eph.mol.eph_fd import harmonic_analysis
 
@@ -32,63 +35,93 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
     if grids.coords is None:
         grids.build(with_non0tab=True)
 
-    # information from scf object
-    nao, nmo = mo_coeff.shape
-    ni = scf_obj._numint
-    xc = scf_obj.xc
+    nao, nmo = mo_coeff[0].shape
+    ni = mf._numint
+    xc = mf.xc
     xctype = ni._xc_type(xc)
-    dm0 = scf_obj.make_rdm1(mo_coeff, mo_occ)
+    dm0a, dm0b = mf.make_rdm1(mo_coeff, mo_occ)
 
-    # allocate memory for vmat
-    vmat = numpy.zeros((natm, 3, nao, nao))
-    max_memory = max(2000, max_memory - vmat.size * 8 / 1e6)
+    vmata = numpy.zeros((natm, 3, nao, nao))
+    vmatb = numpy.zeros((natm, 3, nao, nao))
+
+    max_memory -= vmata.size * 8/1e6 + vmatb.size * 8/1e6
+    max_memory = max(2000, max_memory)
 
     if xctype == 'LDA':
         ao_deriv = 1
         block_loop = ni.block_loop(mol, grids, nao, ao_deriv, max_memory)
         for ao, mask, weight, coords in block_loop:
-            rho = ni.eval_rho2(mol, ao[0], mo_coeff, mo_occ, mask, xctype)
-            vxc, fxc = ni.eval_xc_eff(xc, rho, 2, xctype=xctype)[1:3]
+            rhoa = ni.eval_rho2(mol, ao[0], mo_coeff[0], mo_occ[0], mask, xctype)
+            rhob = ni.eval_rho2(mol, ao[0], mo_coeff[1], mo_occ[1], mask, xctype)
+            vxc, fxc = ni.eval_xc_eff(mf.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
 
-            wv = weight * vxc[0]
-            aow = numint._scale_ao(ao[0], wv)
+            wv = weight * vxc[:,0]
+            ao_dm0a = numint._dot_ao_dm(mol, ao[0], dm0a, mask, shls_slice, ao_loc)
+            ao_dm0b = numint._dot_ao_dm(mol, ao[0], dm0b, mask, shls_slice, ao_loc)
+            aow1a = numpy.einsum('xpi,p->xpi', ao[1:], wv[0])
+            aow1b = numpy.einsum('xpi,p->xpi', ao[1:], wv[1])
+            wf = weight * fxc[:,0,:,0]
 
-            ao_dm0 = numint._dot_ao_dm(mol, ao[0], dm0, mask, shls_slice, ao_loc)
-            wf = weight * fxc[0, 0]
+            for ia in range(mol.natm):
+                p0, p1 = aoslices[ia][2:]
+                rho1a = numpy.einsum('xpi,pi->xp', ao[1:,:,p0:p1], ao_dm0a[:,p0:p1])
+                rho1b = numpy.einsum('xpi,pi->xp', ao[1:,:,p0:p1], ao_dm0b[:,p0:p1])
+                wv  = wf[0,:,None] * rho1a
+                wv += wf[1,:,None] * rho1b
+                aow = numpy.einsum('pi,xp->xpi', ao[0], wv[0])
+                aow[:,:,p0:p1] += aow1a[:,:,p0:p1]
+                rks_grad._d1_dot_(vmata[ia], mol, aow, ao[0], mask, ao_loc, True)
+                aow = numpy.einsum('pi,xp->xpi', ao[0], wv[1])
+                aow[:,:,p0:p1] += aow1b[:,:,p0:p1]
+                rks_grad._d1_dot_(vmatb[ia], mol, aow, ao[0], mask, ao_loc, True)
+            ao_dm0a = ao_dm0b = aow = aow1a = aow1b = None
 
-            for ia, (s0, s1, p0, p1) in enumerate(aoslices):
-                rho1 = numpy.einsum('xpi,pi->xp', ao[1:, :, p0:p1], ao_dm0[:, p0:p1])
-                wv = wf * rho1
-                aow = [numint._scale_ao(ao[0], wv[i]) for i in range(3)]
-                rks_grad._d1_dot_(vmat[ia], mol, aow, ao[0], mask, ao_loc, True)
-            ao_dm0 = aow = None
+        for ia in range(mol.natm):
+            vmata[ia] = -vmata[ia] - vmata[ia].transpose(0,2,1)
+            vmatb[ia] = -vmatb[ia] - vmatb[ia].transpose(0,2,1)
 
     elif xctype == 'GGA':
         ao_deriv = 2
-        block_loop = ni.block_loop(mol, grids, nao, ao_deriv, max_memory)
-        for ao, mask, weight, coords in block_loop:
-            rho = ni.eval_rho2(mol, ao[:4], mo_coeff, mo_occ, mask, xctype)
-            vxc, fxc = ni.eval_xc_eff(xc, rho, 2, xctype=xctype)[1:3]
-
+        vipa = numpy.zeros((3,nao,nao))
+        vipb = numpy.zeros((3,nao,nao))
+        for ao, mask, weight, coords \
+                in ni.block_loop(mol, grids, nao, ao_deriv, max_memory):
+            rhoa = ni.eval_rho2(mol, ao[:4], mo_coeff[0], mo_occ[0], mask, xctype)
+            rhob = ni.eval_rho2(mol, ao[:4], mo_coeff[1], mo_occ[1], mask, xctype)
+            vxc, fxc = ni.eval_xc_eff(mf.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
             wv = weight * vxc
-            wv[0] *= 0.5
+            wv[:,0] *= .5
+            rks_grad._gga_grad_sum_(vipa, mol, ao, wv[0], mask, ao_loc)
+            rks_grad._gga_grad_sum_(vipb, mol, ao, wv[1], mask, ao_loc)
 
-            ao_dm0 = [numint._dot_ao_dm(mol, ao[i], dm0, mask, shls_slice, ao_loc) for i in range(4)]
+            ao_dm0a = [numint._dot_ao_dm(mol, ao[i], dm0a, mask, shls_slice, ao_loc) for i in range(4)]
+            ao_dm0b = [numint._dot_ao_dm(mol, ao[i], dm0b, mask, shls_slice, ao_loc) for i in range(4)]
             wf = weight * fxc
+            for ia in range(mol.natm):
+                dR_rho1a = rks_hess._make_dR_rho1(ao, ao_dm0a, ia, aoslices, xctype)
+                dR_rho1b = rks_hess._make_dR_rho1(ao, ao_dm0b, ia, aoslices, xctype)
+                wv  = numpy.einsum('xbyg,sxg->bsyg', wf[0], dR_rho1a)
+                wv += numpy.einsum('xbyg,sxg->bsyg', wf[1], dR_rho1b)
+                wv[:,:,0] *= .5
+                wva, wvb = wv
 
-            for ia, (s0, s1, p0, p1) in enumerate(aoslices):
-                dR_rho1 = _make_dR_rho1(ao, ao_dm0, ia, aoslices, xctype)
-                wv = numpy.einsum('xyg,sxg->syg', wf, dR_rho1)
-                wv[:, 0] *= 0.5
-                aow = [numint._scale_ao(ao[:4], wv[i,:4]) for i in range(3)]
-                rks_grad._d1_dot_(vmat[ia], mol, aow, ao[0], mask, ao_loc, True)
-            ao_dm0 = aow = None
+                aow = [numint._scale_ao(ao[:4], wva[i,:4]) for i in range(3)]
+                rks_grad._d1_dot_(vmata[ia], mol, aow, ao[0], mask, ao_loc, True)
+                aow = [numint._scale_ao(ao[:4], wvb[i,:4]) for i in range(3)]
+                rks_grad._d1_dot_(vmatb[ia], mol, aow, ao[0], mask, ao_loc, True)
+            ao_dm0a = ao_dm0b = aow = None
+
+        for ia in range(mol.natm):
+            p0, p1 = aoslices[ia][2:]
+            vmata[ia,:,p0:p1] += vipa[:,p0:p1]
+            vmatb[ia,:,p0:p1] += vipb[:,p0:p1]
+            vmata[ia] = -vmata[ia] - vmata[ia].transpose(0,2,1)
+            vmatb[ia] = -vmatb[ia] - vmatb[ia].transpose(0,2,1)
 
     elif xctype == 'MGGA':
         raise NotImplementedError('meta-GGA')
 
-    t1 = log.timer_debug1('vxc', *t0)
-    return -(vmat + vmat.transpose(0, 1, 3, 2))
+    return vmata, vmatb
 
 def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
     log = logger.new_logger(None, verbose)
@@ -187,12 +220,12 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
-        assert isinstance(method, pyscf.dft.rks.RKS)
+        assert isinstance(method, pyscf.dft.rks.RUS)
         ElectronPhononCouplingBase.__init__(self, method)
         self.grids = method.grids
         self.grid_response = False
 
-    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None,
                              scf_obj=None, mo1=None, h1ao=None, verbose=None):
         if scf_obj is None: scf_obj = self.base
 

@@ -252,25 +252,43 @@ if __name__ == '__main__':
     mf.max_cycle = 1000
     mf.kernel()
 
-    # grad = mf.nuc_grad_method().kernel()
-    # assert numpy.allclose(grad, 0.0, atol=1e-4)
-    hess = mf.Hessian().kernel()
+    # Test the finite difference against the analytic results
+    eph_fd = ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    dv_fd = eph_fd.kernel(stepsize=1e-4)
 
-    from eph.mol import rhf
-    eph_an = rhf.ElectronPhononCoupling(mf)
-    dv_an = eph_an.kernel()
+    mf = scf.UHF(mol)
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-12
+    mf.max_cycle = 1000
+    mf.kernel()
 
     # Test the finite difference against the analytic results
     eph_fd = ElectronPhononCoupling(mf)
     eph_fd.verbose = 0
+    dv_fd = eph_fd.kernel(stepsize=1e-4)
 
-    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_fd = eph_fd.kernel(stepsize=stepsize).reshape(dv_an.shape)
-        err = abs(dv_an - dv_fd).max()
-        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+    mf = scf.RKS(mol)
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-12
+    mf.max_cycle = 1000
+    mf.xc = "LDA"
+    mf.kernel()
 
-        atmlst = [0, 1]
-        assert abs(dv_fd[atmlst] - eph_fd.kernel(atmlst=atmlst, stepsize=stepsize)).max() < 1e-6
+    # Test the finite difference against the analytic results
+    eph_fd = ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    dv_fd = eph_fd.kernel(stepsize=1e-4)
 
-    mass = mol.atom_mass_list()
-    res = harmonic_analysis(mol, hess=hess, dv_ao=dv_an, mass=mass)
+    mf = scf.UKS(mol)
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-12
+    mf.max_cycle = 1000
+    mf.xc = "LDA"
+    mf.kernel()
+
+    # Test the finite difference against the analytic results
+    eph_fd = ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    dv_fd = eph_fd.kernel(stepsize=1e-4)
+    

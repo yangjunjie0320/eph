@@ -294,13 +294,10 @@ if __name__ == '__main__':
 
     grad = mf.nuc_grad_method().kernel()
     assert numpy.allclose(grad, 0.0, atol=1e-3)
-
-    hess_obj = mf.Hessian()
-    hess_obj.chkfile = mf.chkfile
-    hess = hess_obj.kernel()
+    hess = mf.Hessian().kernel()
 
     eph_obj = ElectronPhononCoupling(mf)
-    dv_sol = eph_obj.kernel()
+    dv_sol  = eph_obj.kernel()
 
     # Test the finite difference against the analytic results
     eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
@@ -309,33 +306,3 @@ if __name__ == '__main__':
         dv_ref = eph_fd.kernel(stepsize=stepsize)
         err = abs(dv_sol - dv_ref).max()
         print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
-
-    
-    # eph_obj = pyscf.eph.EPH(mf)
-    # from pyscf.eph.rhf import MP_ME
-    # # hack the original EPH implementation
-    # xx = numpy.einsum("i,j->ij", 0.5 * numpy.ones(3), 1 / mol.atom_mass_list() / MP_ME).flatten()
-    # yy = numpy.eye(3 * natm)
-    # dv_ref = eph_obj.get_eph(hess_obj.chkfile,  xx, yy, mo_rep=False)
-    # err = abs(dv_sol - dv_ref).max()
-    # print("err = % 6.4e" % err)
-
-    # freq_ref, mode_ref = eph_obj.get_mode(mol, hess)
-    # eph_ref = eph_obj.get_eph(hess_obj.chkfile, freq_ref, mode_ref, mo_rep=False)
-
-    # # Test with the old eph code
-    # res = harmonic_analysis(
-    #     mol, hess=hess, dv_ao=dv_sol, mass=mol.atom_mass_list(),
-    #     exclude_rot=False, exclude_trans=False,
-    # )
-    # freq_sol, eph_sol = res["freq"], res["eph"]
-
-    # for i1, i2 in zip(numpy.argsort(freq_sol), numpy.argsort(freq_ref)):
-    #     err_freq = abs(freq_sol[i1] - freq_ref[i2])
-    #     print("\n\nerr_freq = % 6.4e" % err_freq)
-    #     assert err_freq < 1e-6, "error = % 6.4e" % err_freq
-
-    #     err_eph = abs(eph_sol[i1]) - abs(eph_ref[i2])
-    #     err_eph = abs(err_eph).max()
-    #     print("err_eph = % 6.4e" % err_eph)
-    #     assert err_eph < 1e-6, "error = % 6.4e" % err_eph
