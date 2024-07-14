@@ -160,7 +160,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             )
         
     else: # is Hartree-Fock
-        assert isinstance(scf_obj, scf.hf.RHF)
+        assert isinstance(scf_obj, scf.uhf.UHF)
         omega, alpha, hyb = 0.0, 0.0, 1.0
         is_hybrid = True
         vxc1 = None
@@ -232,15 +232,15 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         dm1b += dm1b.transpose(0, 2, 1)
         dm1 = numpy.asarray((dm1a, dm1b))
 
-        v1a, v1b = vresp(ia, dm1)
-        v1a += vjk1a
-        v1b += vjk1b
+        v1a, v1b = vresp(dm1)
+        v1a += vjk1a + vjk1a.transpose(0, 2, 1)
+        v1b += vjk1b + vjk1b.transpose(0, 2, 1)
 
         if vxc1 is not None:
             v1a += vxc1[0][ia]
             v1b += vxc1[1][ia]
         
-        return v1
+        return (v1a, v1b)
     
     return func
 
