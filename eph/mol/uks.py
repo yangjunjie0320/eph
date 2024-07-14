@@ -132,29 +132,38 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     nao, nmo = mo_coeff[0].shape
     nbas = mol.nbas
     
-    ma = mo_occ[0] > 0
-    mb = mo_occ[1] > 0
-
-    orboa = mo_coeff[0][:, ma]
-    orbob = mo_coeff[1][:, mb]
+    orboa = mo_coeff[0][:, mo_occ[0] > 0]
+    orbob = mo_coeff[1][:, mo_occ[1] > 0]
     nocca = orboa.shape[1]
     noccb = orbob.shape[1]
-
     dm0a = numpy.dot(orboa, orboa.T)
     dm0b = numpy.dot(orbob, orbob.T)
+    assert isinstance(scf_obj, scf.uhf.UHF) or isinstance(scf_obj, scf.uks.UKS)
 
-    vxc1 = _get_vxc_deriv(
-        mo_coeff=mo_coeff, mo_occ=mo_occ,
-        scf_obj=scf_obj,
-        max_memory=2000, verbose=verbose
+    if isinstance(scf_obj, dft.rks.KohnShamDFT):
+        # test if the functional has the second derivative
+        ni = scf_obj._numint
+        ni.libxc.test_deriv_order(
+            scf_obj.xc, 2, raise_error=True
         )
 
-    # DFT functional info
-    ni = scf_obj._numint
-    xc = scf_obj.xc
-    ni.libxc.test_deriv_order(xc, 2, raise_error=True)
-    omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=mol.spin)
-    is_hybrid = ni.libxc.is_hybrid_xc(xc)
+        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(
+            scf_obj.xc, spin=mol.spin
+        )
+
+        is_hybrid = ni.libxc.is_hybrid_xc(scf_obj.xc)
+
+        vxc1 = _get_vxc_deriv(
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            scf_obj=scf_obj,
+            max_memory=2000, verbose=verbose
+            )
+        
+    else: # is Hartree-Fock
+        assert isinstance(scf_obj, scf.hf.RHF)
+        omega, alpha, hyb = 0.0, 0.0, 1.0
+        is_hybrid = True
+        vxc1 = None
 
     vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
     
@@ -164,7 +173,6 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
         t1a = None
         t1b = None
-
         if isinstance(mo1, str):
             assert os.path.exists(mo1), '%s not found' % mo1
             t1a = lib.chkfile.load(mo1, 'scf_mo1/0/%d' % ia)
@@ -181,50 +189,13 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         assert t1b is not None
         t1 = (t1a, t1b)
 
-        vj1a = None
-        vk1a = None
-        vj1b = None
-        vk1b = None
-        if isinstance(h1ao, str):
-            assert os.path.exists(h1ao), '%s not found' % h1ao
-            vj1a = lib.chkfile.load(h1ao, 'eph_vj1ao/0/%d' % ia)
-            vk1a = lib.chkfile.load(h1ao, 'eph_vk1ao/0/%d' % ia)
-            vj1b = lib.chkfile.load(h1ao, 'eph_vj1ao/1/%d' % ia)
-            vk1b = lib.chkfile.load(h1ao, 'eph_vk1ao/1/%d' % ia)
-        
-        elif hasattr(h1ao[0][ia], 'vj1'):
-            h1aoa, h1aob = h1ao
-
-            vj1a = h1aoa[ia].vj1
-            vk1a = h1aoa[ia].vk1
-            vj1b = h1aob[ia].vj1
-            vk1b = h1aob[ia].vk1
-
-        if vj1a is None:
-            s0, s1, p0, p1 = aoslices[ia]
-
-            shls_slice  = (s0, s1) + (0, nbas) * 3
-            script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
-            script_dms += ['ji->s2kl', -dm0b[:,p0:p1]] # vj1b
-            script_dms += ['li->s1kj', -dm0a[:,p0:p1]] # vk1a
-            script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
-
-            from pyscf.hessian.uhf import _get_jk
-            tmp = _get_jk(
-                mol, 'int2e_ip1', 3, 's2kl',
-                script_dms=script_dms,
-                shls_slice=shls_slice
-            )
-            
-            vj1a, vj1b, vk1a, vk1b = tmp
-
-        veff = None
-
         s0, s1, p0, p1 = aoslices[ia]
         shls_slice  = (s0, s1) + (0, nbas) * 3
-        script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
-        script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
-        
+        script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
+        script_dms += ['ji->s2kl', -dm0b[:,p0:p1]] # vj1b
+        script_dms += ['li->s1kj', -dm0a[:,p0:p1]] # vk1a
+        script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
+
         if is_hybrid:
             from pyscf.hessian.rhf import _get_jk
             tmp = _get_jk(
@@ -232,37 +203,45 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
                 script_dms=script_dms,
                 shls_slice=shls_slice
             )
-
-            vj1, vk1 = tmp
-            veff = vj1 - vk1 * 0.5 * hyb
+            
+            vj1a, vj1b, vk1a, vk1b = tmp
+            vj1 = vj1a + vj1b
+            vjk1 = (vj1 - vk1a * hyb, vj1 - vk1b * hyb)
 
             if omega != 0.0:
-                with mol.with_range_coulomb(omega):
-                    vk1 = _get_jk(
-                        mol, 'int2e_ip1', 3, 's2kl',
-                        script_dms=script_dms[2:],
-                        shls_slice=shls_slice
-                    )
-                veff -= (alpha - hyb) * 0.5 * vk1
+                raise NotImplementedError
 
         else: # is pure functional
-            vj1 = _get_jk(
+            vj1a, vj1b = _get_jk(
                 mol, 'int2e_ip1', 3, 's2kl',
-                script_dms=script_dms[:2],
+                script_dms=script_dms[:4],
                 shls_slice=shls_slice
             )
 
-            veff = vj1
+            vj1 = vj1a + vj1b
+            vjk1 = (vj1, vj1)
 
-        return t1, veff
-
+        return t1, vjk1
+    
     def func(ia):
-        t1, vjk1 = load(ia)
-        dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', t1, orbo)
-        dm1 = dm1 + dm1.transpose(0, 2, 1)
-        veff1 = vjk1 + vjk1.transpose(0, 2, 1) + vxc1[ia]
-        return vresp(dm1) + veff1
+        (t1a, t1b), (vjk1a, vjk1b) = load(ia)
+        dm1a = numpy.einsum('xpi,qi->xpq', t1a, orboa)
+        dm1a += dm1a.transpose(0, 2, 1)
 
+        dm1b = numpy.einsum('xpi,qi->xpq', t1b, orbob)
+        dm1b += dm1b.transpose(0, 2, 1)
+        dm1 = numpy.asarray((dm1a, dm1b))
+
+        v1a, v1b = vresp(ia, dm1)
+        v1a += vjk1a
+        v1b += vjk1b
+
+        if vxc1 is not None:
+            v1a += vxc1[0][ia]
+            v1b += vxc1[1][ia]
+        
+        return v1
+    
     return func
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):

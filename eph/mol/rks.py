@@ -98,14 +98,12 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     nao, nmo = mo_coeff.shape
     nbas = scf_obj.mol.nbas
 
-    mask = mo_occ > 0
-    orbo = mo_coeff[:, mask]
+    orbo = mo_coeff[:, mo_occ > 0]
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
-
     assert isinstance(scf_obj, scf.hf.RHF) or isinstance(scf_obj, scf.rks.RKS)
 
-    if isinstance(scf_obj, dft.rks.RKS):
+    if isinstance(scf_obj, dft.rks.KohnShamDFT):
         # test if the functional has the second derivative
         ni = scf_obj._numint
         ni.libxc.test_deriv_order(
@@ -149,8 +147,6 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
         vj1 = None
         vk1 = None
-        assert vj1 is None and vk1 is None
-
         veff = None
 
         s0, s1, p0, p1 = aoslices[ia]
