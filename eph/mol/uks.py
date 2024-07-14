@@ -11,6 +11,7 @@ from pyscf.scf import hf, _vhf
 from pyscf import hessian
 
 from pyscf.grad import rks as rks_grad
+from pyscf.hessian import rks as rks_hess
 from pyscf.dft import numint, gen_grid
 from pyscf.hessian.rks import _make_dR_rho1, _check_mgga_grids
 
@@ -84,8 +85,8 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
         ao_deriv = 2
         vipa = numpy.zeros((3,nao,nao))
         vipb = numpy.zeros((3,nao,nao))
-        for ao, mask, weight, coords \
-                in ni.block_loop(mol, grids, nao, ao_deriv, max_memory):
+        block_loop = ni.block_loop(mol, grids, nao, ao_deriv, max_memory)
+        for ao, mask, weight, coords in block_loop:
             rhoa = ni.eval_rho2(mol, ao[:4], mo_coeff[0], mo_occ[0], mask, xctype)
             rhob = ni.eval_rho2(mol, ao[:4], mo_coeff[1], mo_occ[1], mask, xctype)
             vxc, fxc = ni.eval_xc_eff(mf.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
@@ -128,13 +129,19 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
     mol = scf_obj.mol
     aoslices = mol.aoslice_by_atom()
-    nao, nmo = mo_coeff.shape
-    nbas = scf_obj.mol.nbas
+    nao, nmo = mo_coeff[0].shape
+    nbas = mol.nbas
+    
+    ma = mo_occ[0] > 0
+    mb = mo_occ[1] > 0
 
-    mask = mo_occ > 0
-    orbo = mo_coeff[:, mask]
-    nocc = orbo.shape[1]
-    dm0 = numpy.dot(orbo, orbo.T) * 2.0
+    orboa = mo_coeff[0][:, ma]
+    orbob = mo_coeff[1][:, mb]
+    nocca = orboa.shape[1]
+    noccb = orbob.shape[1]
+
+    dm0a = numpy.dot(orboa, orboa.T)
+    dm0b = numpy.dot(orbob, orbob.T)
 
     vxc1 = _get_vxc_deriv(
         mo_coeff=mo_coeff, mo_occ=mo_occ,
@@ -151,25 +158,65 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
     vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
     
-
     def load(ia):
         assert h1ao is not None
         assert mo1 is not None
 
-        t1 = None
+        t1a = None
+        t1b = None
+
         if isinstance(mo1, str):
             assert os.path.exists(mo1), '%s not found' % mo1
-            t1 = lib.chkfile.load(mo1, 'scf_mo1/%d' % ia)
-            t1 = t1.reshape(-1, nao, nocc)
+            t1a = lib.chkfile.load(mo1, 'scf_mo1/0/%d' % ia)
+            t1b = lib.chkfile.load(mo1, 'scf_mo1/1/%d' % ia)
+            t1a = t1a.reshape(-1, nao, nocca)
+            t1b = t1b.reshape(-1, nao, noccb)
 
         else:
-            t1 = mo1[ia].reshape(-1, nao, nocc)
+            mo1a, mo1b = mo1
+            t1a = mo1a[ia].reshape(-1, nao, nocca)
+            t1b = mo1b[ia].reshape(-1, nao, noccb)
 
-        assert t1 is not None
+        assert t1a is not None
+        assert t1b is not None
+        t1 = (t1a, t1b)
 
-        vj1 = None
-        vk1 = None
-        assert vj1 is None and vk1 is None
+        vj1a = None
+        vk1a = None
+        vj1b = None
+        vk1b = None
+        if isinstance(h1ao, str):
+            assert os.path.exists(h1ao), '%s not found' % h1ao
+            vj1a = lib.chkfile.load(h1ao, 'eph_vj1ao/0/%d' % ia)
+            vk1a = lib.chkfile.load(h1ao, 'eph_vk1ao/0/%d' % ia)
+            vj1b = lib.chkfile.load(h1ao, 'eph_vj1ao/1/%d' % ia)
+            vk1b = lib.chkfile.load(h1ao, 'eph_vk1ao/1/%d' % ia)
+        
+        elif hasattr(h1ao[0][ia], 'vj1'):
+            h1aoa, h1aob = h1ao
+
+            vj1a = h1aoa[ia].vj1
+            vk1a = h1aoa[ia].vk1
+            vj1b = h1aob[ia].vj1
+            vk1b = h1aob[ia].vk1
+
+        if vj1a is None:
+            s0, s1, p0, p1 = aoslices[ia]
+
+            shls_slice  = (s0, s1) + (0, nbas) * 3
+            script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
+            script_dms += ['ji->s2kl', -dm0b[:,p0:p1]] # vj1b
+            script_dms += ['li->s1kj', -dm0a[:,p0:p1]] # vk1a
+            script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
+
+            from pyscf.hessian.uhf import _get_jk
+            tmp = _get_jk(
+                mol, 'int2e_ip1', 3, 's2kl',
+                script_dms=script_dms,
+                shls_slice=shls_slice
+            )
+            
+            vj1a, vj1b, vk1a, vk1b = tmp
 
         veff = None
 

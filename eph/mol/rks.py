@@ -103,21 +103,34 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
 
-    vxc1 = _get_vxc_deriv(
-        mo_coeff=mo_coeff, mo_occ=mo_occ,
-        scf_obj=scf_obj,
-        max_memory=2000, verbose=verbose
+    assert isinstance(scf_obj, scf.hf.RHF) or isinstance(scf_obj, scf.rks.RKS)
+
+    if isinstance(scf_obj, dft.rks.RKS):
+        # test if the functional has the second derivative
+        ni = scf_obj._numint
+        ni.libxc.test_deriv_order(
+            scf_obj.xc, 2, raise_error=True
         )
 
-    # DFT functional info
-    ni = scf_obj._numint
-    xc = scf_obj.xc
-    ni.libxc.test_deriv_order(xc, 2, raise_error=True)
-    omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=mol.spin)
-    is_hybrid = ni.libxc.is_hybrid_xc(xc)
+        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(
+            scf_obj.xc, spin=mol.spin
+        )
+
+        is_hybrid = ni.libxc.is_hybrid_xc(scf_obj.xc)
+
+        vxc1 = _get_vxc_deriv(
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            scf_obj=scf_obj,
+            max_memory=2000, verbose=verbose
+            )
+        
+    else: # is Hartree-Fock
+        assert isinstance(scf_obj, scf.hf.RHF)
+        omega, alpha, hyb = 0.0, 0.0, 1.0
+        is_hybrid = True
+        vxc1 = None
 
     vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
-    
 
     def load(ia):
         assert h1ao is not None
@@ -180,28 +193,23 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         t1, vjk1 = load(ia)
         dm1 = 2.0 * numpy.einsum('xpi,qi->xpq', t1, orbo)
         dm1 = dm1 + dm1.transpose(0, 2, 1)
-        veff1 = vjk1 + vjk1.transpose(0, 2, 1) + vxc1[ia]
-        return vresp(dm1) + veff1
+
+        v1  = vjk1 + vjk1.transpose(0, 2, 1)
+        v1 += vresp(dm1)
+
+        if vxc1 is not None:
+            v1 += vxc1[ia]
+        
+        return v1
 
     return func
 
-class ElectronPhononCoupling(ElectronPhononCouplingBase):
+class ElectronPhononCoupling(eph.mol.rhf.ElectronPhononCoupling):
     def __init__(self, method):
         assert isinstance(method, pyscf.dft.rks.RKS)
         ElectronPhononCouplingBase.__init__(self, method)
         self.grids = method.grids
         self.grid_response = False
-
-    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
-        if scf_obj is None: scf_obj = self.base
-
-        res = gen_veff_deriv(
-            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
-            mo1=mo1, h1ao=h1ao, verbose=verbose
-            )
-        
-        return res
     
 if __name__ == '__main__':
     from pyscf import gto, scf
