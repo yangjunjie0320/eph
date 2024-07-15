@@ -37,10 +37,10 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
         grids.build(with_non0tab=True)
 
     nao, nmo = mo_coeff[0].shape
-    ni = mf._numint
-    xc = mf.xc
+    ni = scf_obj._numint
+    xc = scf_obj.xc
     xctype = ni._xc_type(xc)
-    dm0a, dm0b = mf.make_rdm1(mo_coeff, mo_occ)
+    dm0a, dm0b = scf_obj.make_rdm1(mo_coeff, mo_occ)
 
     vmata = numpy.zeros((natm, 3, nao, nao))
     vmatb = numpy.zeros((natm, 3, nao, nao))
@@ -54,7 +54,7 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
         for ao, mask, weight, coords in block_loop:
             rhoa = ni.eval_rho2(mol, ao[0], mo_coeff[0], mo_occ[0], mask, xctype)
             rhob = ni.eval_rho2(mol, ao[0], mo_coeff[1], mo_occ[1], mask, xctype)
-            vxc, fxc = ni.eval_xc_eff(mf.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
+            vxc, fxc = ni.eval_xc_eff(scf_obj.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
 
             wv = weight * vxc[:,0]
             ao_dm0a = numint._dot_ao_dm(mol, ao[0], dm0a, mask, shls_slice, ao_loc)
@@ -89,7 +89,7 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
         for ao, mask, weight, coords in block_loop:
             rhoa = ni.eval_rho2(mol, ao[:4], mo_coeff[0], mo_occ[0], mask, xctype)
             rhob = ni.eval_rho2(mol, ao[:4], mo_coeff[1], mo_occ[1], mask, xctype)
-            vxc, fxc = ni.eval_xc_eff(mf.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
+            vxc, fxc = ni.eval_xc_eff(scf_obj.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
             wv = weight * vxc
             wv[:,0] *= .5
             rks_grad._gga_grad_sum_(vipa, mol, ao, wv[0], mask, ao_loc)
