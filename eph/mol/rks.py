@@ -145,17 +145,14 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
 
         assert t1 is not None
 
-        vj1 = None
-        vk1 = None
-        veff = None
-
+        from pyscf.hessian.rhf import _get_jk
         s0, s1, p0, p1 = aoslices[ia]
         shls_slice  = (s0, s1) + (0, nbas) * 3
         script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
         script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
         
         if is_hybrid:
-            from pyscf.hessian.rhf import _get_jk
+            
             tmp = _get_jk(
                 mol, 'int2e_ip1', 3, 's2kl',
                 script_dms=script_dms,
@@ -163,7 +160,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             )
 
             vj1, vk1 = tmp
-            veff = vj1 - vk1 * 0.5 * hyb
+            vjk1 = vj1 - vk1 * 0.5 * hyb
 
             if omega != 0.0:
                 with mol.with_range_coulomb(omega):
@@ -172,7 +169,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
                         script_dms=script_dms[2:],
                         shls_slice=shls_slice
                     )
-                veff -= (alpha - hyb) * 0.5 * vk1
+                vjk1 -= (alpha - hyb) * 0.5 * vk1
 
         else: # is pure functional
             vj1 = _get_jk(
@@ -181,9 +178,9 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
                 shls_slice=shls_slice
             )
 
-            veff = vj1
+            vjk1 = vj1
 
-        return t1, veff
+        return t1, vjk1
 
     def func(ia):
         t1, vjk1 = load(ia)

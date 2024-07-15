@@ -189,6 +189,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         assert t1b is not None
         t1 = (t1a, t1b)
 
+        from pyscf.hessian.rhf import _get_jk
         s0, s1, p0, p1 = aoslices[ia]
         shls_slice  = (s0, s1) + (0, nbas) * 3
         script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
@@ -197,7 +198,6 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
 
         if is_hybrid:
-            from pyscf.hessian.rhf import _get_jk
             tmp = _get_jk(
                 mol, 'int2e_ip1', 3, 's2kl',
                 script_dms=script_dms,
@@ -205,11 +205,19 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             )
             
             vj1a, vj1b, vk1a, vk1b = tmp
-            vj1 = vj1a + vj1b
-            vjk1 = (vj1 - vk1a * hyb, vj1 - vk1b * hyb)
+            vjk1a = vj1a + vj1b - vk1a * hyb
+            vjk1b = vj1a + vj1b - vk1b * hyb
 
             if omega != 0.0:
-                raise NotImplementedError
+                with mol.with_range_couloomb(omega):
+                    vk1a, vk1b = _get_jk(
+                        mol, 'int2e_ip1', 3, 's2kl',
+                        script_dms=script_dms[2:],
+                        shls_slice=shls_slice
+                    )
+
+                vjk1a -= (alpha - hyb) * vk1a
+                vjk1b -= (alpha - hyb) * vk1b
 
         else: # is pure functional
             vj1a, vj1b = _get_jk(
@@ -219,9 +227,9 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
             )
 
             vj1 = vj1a + vj1b
-            vjk1 = (vj1, vj1)
+            vjk1a = vjk1b = vj1
 
-        return t1, vjk1
+        return t1, (vjk1a, vjk1b)
     
     def func(ia):
         (t1a, t1b), (vjk1a, vjk1b) = load(ia)
@@ -244,23 +252,12 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
     
     return func
 
-class ElectronPhononCoupling(ElectronPhononCouplingBase):
+class ElectronPhononCoupling(eph.mol.uhf.ElectronPhononCoupling):
     def __init__(self, method):
-        assert isinstance(method, pyscf.dft.rks.RUS)
+        assert isinstance(method, pyscf.dft.uks.UKS)
         ElectronPhononCouplingBase.__init__(self, method)
         self.grids = method.grids
         self.grid_response = False
-
-    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None,
-                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
-        if scf_obj is None: scf_obj = self.base
-
-        res = gen_veff_deriv(
-            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
-            mo1=mo1, h1ao=h1ao, verbose=verbose
-            )
-        
-        return res
     
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -281,7 +278,7 @@ if __name__ == '__main__':
     natm = mol.natm
     nao = mol.nao_nr()
 
-    mf = scf.RKS(mol)
+    mf = scf.UKS(mol)
     mf.xc = "pbe0"
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
@@ -294,16 +291,8 @@ if __name__ == '__main__':
     hess_obj.chkfile = mf.chkfile
     hess = hess_obj.kernel()
 
-    from eph.mol import rks
-    eph_obj = rks.ElectronPhononCoupling(mf)
-    dv_sol = eph_obj.kernel()
-    
-    grad = mf.nuc_grad_method().kernel()
-    assert numpy.allclose(grad, 0.0, atol=1e-3)
-    hess = mf.Hessian().kernel()
-
     eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel()
+    dv_sol = eph_obj.kernel()
 
     # Test the finite difference against the analytic results
     eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
