@@ -124,7 +124,6 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         self.mol = method.mol
         self.base = method
         self.atmlst = None
-        self.to_normal_mode = True
 
         self.max_memory = method.max_memory
         self.unit = 'au'

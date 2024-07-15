@@ -12,10 +12,27 @@ from pyscf import hessian
 
 import eph
 from eph.mol import eph_fd, uhf
-from eph.mol.rhf import ElectronPhononCouplingBase
-from eph.mol.eph_fd import harmonic_analysis
 
-class ElectronPhononCoupling(eph.mol.eph_fd.ElectronPhononCoupling):
+class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
+    def __init__(self, method):
+        self.verbose = method.verbose
+        self.stdout = method.stdout
+        self.chkfile = method.chkfile
+
+        self.mol = self.cell = method.mol
+        self.base = method
+        self.atmlst = None
+
+        self.max_memory = method.max_memory
+        self.unit = 'au'
+        self.dv_ao = None
+
+# fix the missing nuc_grad_method
+from pyscf.pbc import grad
+pyscf.pbc.scf.hf.RHF.nuc_grad_method  = lambda self: pyscf.pbc.grad.rhf.Gradients(self)
+pyscf.pbc.scf.uhf.UHF.nuc_grad_method = lambda self: pyscf.pbc.grad.uhf.Gradients(self)
+
+class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         if atmlst is None:
             atmlst = range(self.mol.natm)
@@ -36,7 +53,7 @@ class ElectronPhononCoupling(eph.mol.eph_fd.ElectronPhononCoupling):
         scan_obj = self.base.as_scanner()
         grad_obj = self.base.nuc_grad_method()
 
-        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
+        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.cell.intor("int1e_ipkin")
         v0 = v0.reshape(spin, 3, nao, nao)
 
         dv_ao = []
@@ -74,64 +91,30 @@ class ElectronPhononCoupling(eph.mol.eph_fd.ElectronPhononCoupling):
         return self.dv_ao
 
 if __name__ == '__main__':
-    from pyscf import gto, scf
+    from pyscf.pbc import gto, scf
 
-    mol = gto.M()
-    mol.atom = '''
-    O       0.0000000000     0.0000000000     0.1146878262
-    H      -0.7540663886    -0.0000000000    -0.4587203947
-    H       0.7540663886    -0.0000000000    -0.4587203947
+    cell = gto.Cell()
+    cell.atom = '''
+    He 2.000000 2.000000 2.000000
+    He 2.000000 2.000000 4.000000
     '''
-    mol.basis = '631g*'
-    mol.verbose = 0
-    mol.symmetry = False
-    mol.cart = True
-    mol.unit = "AA"
-    mol.build()
+    cell.basis = 'sto3g'
+    cell.a = numpy.diag([4, 4, 6])
+    cell.unit = 'B'
+    cell.verbose = 0
+    cell.build()
 
-    mf = scf.RHF(mol)
+    mf = scf.RHF(cell)
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
     mf.max_cycle = 1000
     mf.kernel()
 
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
+    # grad = mf.nuc_grad_method().kernel()
+    # assert numpy.allclose(grad, 0.0, atol=1e-3)
+    # hess = mf.Hessian().kernel()
 
-    mf = scf.UHF(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.kernel()
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
 
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
-
-    mf = scf.RKS(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.xc = "LDA"
-    mf.kernel()
-
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
-
-    mf = scf.UKS(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.xc = "LDA"
-    mf.kernel()
-
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
     
