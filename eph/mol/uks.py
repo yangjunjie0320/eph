@@ -83,8 +83,6 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
 
     elif xctype == 'GGA':
         ao_deriv = 2
-        vipa = numpy.zeros((3,nao,nao))
-        vipb = numpy.zeros((3,nao,nao))
         block_loop = ni.block_loop(mol, grids, nao, ao_deriv, max_memory)
         for ao, mask, weight, coords in block_loop:
             rhoa = ni.eval_rho2(mol, ao[:4], mo_coeff[0], mo_occ[0], mask, xctype)
@@ -92,8 +90,6 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
             vxc, fxc = ni.eval_xc_eff(scf_obj.xc, (rhoa, rhob), 2, xctype=xctype)[1:3]
             wv = weight * vxc
             wv[:,0] *= .5
-            rks_grad._gga_grad_sum_(vipa, mol, ao, wv[0], mask, ao_loc)
-            rks_grad._gga_grad_sum_(vipb, mol, ao, wv[1], mask, ao_loc)
 
             ao_dm0a = [numint._dot_ao_dm(mol, ao[i], dm0a, mask, shls_slice, ao_loc) for i in range(4)]
             ao_dm0b = [numint._dot_ao_dm(mol, ao[i], dm0b, mask, shls_slice, ao_loc) for i in range(4)]
@@ -114,8 +110,6 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
 
         for ia in range(mol.natm):
             p0, p1 = aoslices[ia][2:]
-            vmata[ia,:,p0:p1] += vipa[:,p0:p1]
-            vmatb[ia,:,p0:p1] += vipb[:,p0:p1]
             vmata[ia] = -vmata[ia] - vmata[ia].transpose(0,2,1)
             vmatb[ia] = -vmatb[ia] - vmatb[ia].transpose(0,2,1)
 
