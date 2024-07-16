@@ -92,29 +92,34 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
+    from pyscf.pbc.tools import pyscf_ase
+
+    import ase
+    import ase.lattice
+    from ase.lattice.cubic import Diamond
+    diamond = Diamond(symbol='C', latticeconstant=3.5668)
 
     cell = gto.Cell()
-    cell.atom = '''
-    He 2.000000 2.000000 2.000000
-    He 2.000000 2.000000 4.000000
-    '''
-    cell.basis = 'sto3g'
-    cell.a = numpy.diag([4, 4, 6])
-    cell.unit = 'B'
-    cell.verbose = 0
+    cell.a = diamond.cell
+    cell.atom = pyscf_ase.ase_atoms_to_pyscf(diamond)
+    cell.basis = 'gth-szv'
+    cell.pseudo = 'gth-pade'
+    cell.ke_cutoff = 200
+    cell.precision = 1e-6
+    cell.verbose = 5
     cell.build()
 
-    mf = scf.RHF(cell)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
+    from pyscf.pbc import dft as pbcdft
+    from pyscf.pbc.dft import multigrid
+
+    mf = pbcdft.RKS(cell)
+    #mf.xc = "LDA, VWN"
+    mf.xc = "PBE,PBE"
+    mf.init_guess = 'atom' # atom guess is fast
+    mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    mf.with_df.ngrids = 4 # number of sets of grid points
     mf.kernel()
 
-    # grad = mf.nuc_grad_method().kernel()
-    # assert numpy.allclose(grad, 0.0, atol=1e-3)
-    # hess = mf.Hessian().kernel()
-
-    eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel()
-
-    
+    from pyscf.pbc.grad import rks as rks_grad
+    grad = rks_grad.Gradients(mf)
+    g = grad.kernel()
