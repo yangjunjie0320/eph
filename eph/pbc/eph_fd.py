@@ -32,6 +32,17 @@ from pyscf.pbc import grad
 pyscf.pbc.scf.hf.RHF.nuc_grad_method  = lambda self: pyscf.pbc.grad.rhf.Gradients(self)
 pyscf.pbc.scf.uhf.UHF.nuc_grad_method = lambda self: pyscf.pbc.grad.uhf.Gradients(self)
 
+def _get_v0(scf_obj, dm0):
+    assert isinstance(scf_obj, pyscf.pbc.scf.hf.SCF)
+    spin = 1
+    
+    kpts = numpy.zeros((1, 3))
+    if isinstance(scf_obj, pyscf.pbc.scf.khf.KHF):
+        kpts = scf_obj.kpts
+
+    
+
+
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         if atmlst is None:
@@ -43,18 +54,30 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         xyz = mol.atom_coords()
         aoslices = mol.aoslice_by_atom()
 
-        dm0 = self.base.make_rdm1()
+        scf_obj = self.base.to_kscf()
+        scf_obj.kernel()
+
+        vk = scf_obj.kpts
+        nk = len(scf_obj.kpts)
+
+        print(scf_obj, nk, scf_obj.kpts)
+
+        dm0 = scf_obj.make_rdm1()
         nao = mol.nao_nr()
-        dm0 = dm0.reshape(-1, nao, nao)
-        spin = dm0.shape[0]
-        if spin == 1:
-            dm0 = dm0[0]
+        # dm0 = numpy.asarray(dm0).reshape(-1, nk, nao, nao)
+        # spin = dm0.shape[1]
+
+        # if spin == 1:
+        #     dm0 = dm0[:, 0, :, :]
 
         scan_obj = self.base.as_scanner()
-        grad_obj = self.base.nuc_grad_method()
+        grad_obj = self.base.to_kscf().nuc_grad_method()
 
-        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.cell.intor("int1e_ipkin")
-        v0 = v0.reshape(spin, 3, nao, nao)
+        from pyscf.pbc.grad import rhf as rhf_grad
+        from pyscf.pbc.grad import rks as rks_grad
+        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + scf_obj.cell.pbc_intor("int1e_ipkin", kpts=vk)
+        print(v0.shape)
+        # v0 = v0.reshape(spin, 3, nao, nao)
 
         dv_ao = []
         for i0, ia in enumerate(atmlst):
@@ -100,26 +123,26 @@ if __name__ == '__main__':
     diamond = Diamond(symbol='C', latticeconstant=3.5668)
 
     cell = gto.Cell()
-    cell.a = diamond.cell
-    cell.atom = pyscf_ase.ase_atoms_to_pyscf(diamond)
-    cell.basis = 'gth-szv'
+    cell.a = numpy.diag([2, 2, 6])
+    cell.atom = """
+    He 1.000000 1.000000 2.000000
+    He 1.000000 1.000000 4.000000
+    """
+    cell.basis = 'gth-dzv'
     cell.pseudo = 'gth-pade'
-    cell.ke_cutoff = 200
-    cell.precision = 1e-6
-    cell.verbose = 5
     cell.build()
 
+    from pyscf.pbc import scf as pbcscf
     from pyscf.pbc import dft as pbcdft
     from pyscf.pbc.dft import multigrid
 
-    mf = pbcdft.RKS(cell)
+    mf = pbcscf.RHF(cell)
     #mf.xc = "LDA, VWN"
-    mf.xc = "PBE,PBE"
+    # mf.xc = "PBE"
     mf.init_guess = 'atom' # atom guess is fast
-    mf.with_df = multigrid.MultiGridFFTDF2(cell)
-    mf.with_df.ngrids = 4 # number of sets of grid points
+    # mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    # mf.with_df.ngrids = 4 # number of sets of grid points
     mf.kernel()
 
-    from pyscf.pbc.grad import rks as rks_grad
-    grad = rks_grad.Gradients(mf)
-    g = grad.kernel()
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
