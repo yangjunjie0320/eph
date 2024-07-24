@@ -3,12 +3,9 @@ import os, numpy, scipy, tempfile
 import pyscf
 from pyscf import lib, scf
 from pyscf.gto.mole import is_au
-import pyscf.hessian
 from pyscf.lib import logger
-from pyscf.scf import hf, _vhf
-from pyscf import hessian
 
-from pyscf import __config__ 
+from pyscf import __config__
 from pyscf.data.nist import HARTREE2WAVENUMBER, MP_ME
 CUTOFF_FREQUENCY      = getattr(__config__, 'eph_cutoff_frequency', 80)  # 80 cm-1
 KEEP_IMAG_FREQUENCY   = getattr(__config__, 'eph_keep_imaginary_frequency', False)
@@ -152,6 +149,12 @@ class ElectronPhononCouplingBase(lib.StreamObject):
     
     def _finalize(self, dv_ao):
         assert dv_ao is not None
+        if not isinstance(dv_ao, numpy.ndarray):
+            spin = dv_ao[0].shape[0]
+            nao = dv_ao[0].shape[-1]
+            dv_ao = numpy.asarray(dv_ao)
+            dv_ao = dv_ao.reshape(-1, 3, spin, nao, nao)
+
         natm, _, spin, nao, _ = dv_ao.shape
         assert dv_ao.shape == (natm, 3, spin, nao, nao)
 
@@ -170,17 +173,49 @@ class ElectronPhononCouplingBase(lib.StreamObject):
 
     def kernel(self):
         raise NotImplementedError
+    
+def _fd(scan_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
+    ia = atmlst[ix // 3]
+    x = ix % 3
+    nao = scan_obj.mol.nao_nr()
+    p0, p1 = scan_obj.mol.aoslice_by_atom()[ia][2:]
+
+    dm0 = dm0.reshape(-1, nao, nao)
+    spin = dm0.shape[0]
+    assert v0.shape == (spin, 3, nao, nao)
+
+    dxyz = numpy.zeros_like(xyz)
+    dxyz[ia, x] = stepsize
+
+    m1 = scan_obj.mol.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+    scan_obj(m1, dm0=dm0[0] if spin == 1 else dm0)
+    dm1 = scan_obj.make_rdm1()
+    v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nao, nao)
+    v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+    
+    m2 = scan_obj.mol.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+    scan_obj(m2, dm0=dm0[0] if spin == 1 else dm0)
+    dm2 = scan_obj.make_rdm1()
+    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
+    v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+
+    assert v1.shape == v2.shape == (spin, nao, nao)
+
+    dv_ia_x = (v1 - v2) / (2 * stepsize)
+    dv_ia_x[:, p0:p1, :] -= v0[:, x, p0:p1, :]
+    dv_ia_x[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1)
+    return dv_ia_x.reshape(spin, nao, nao)
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
-        if atmlst is None:
-            atmlst = range(self.mol.natm)
-
-        self.dump_flags()
-
         mol = self.mol
-        xyz = mol.atom_coords()
-        aoslices = mol.aoslice_by_atom()
+        xyz = mol.atom_coords(unit="Bohr")
+
+        if atmlst is None:
+            atmlst = range(mol.natm)
+        
+        natm = len(atmlst)
+        self.dump_flags()
 
         dm0 = self.base.make_rdm1()
         nao = mol.nao_nr()
@@ -189,44 +224,25 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if spin == 1:
             dm0 = dm0[0]
 
-        scan_obj = self.base.as_scanner()
-        grad_obj = self.base.nuc_grad_method()
+        scf_obj = self.base
+        scan_obj = scf_obj.as_scanner()
+        grad_obj = scf_obj.nuc_grad_method()
 
-        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + self.base.mol.intor("int1e_ipkin")
+        v0  = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore()
+        v0 += scf_obj.mol.intor("int1e_ipkin")
         v0 = v0.reshape(spin, 3, nao, nao)
 
         dv_ao = []
-        for i0, ia in enumerate(atmlst):
-            s0, s1, p0, p1 = aoslices[ia]
-            for x in range(3):
-                dxyz = numpy.zeros_like(xyz)
-                dxyz[ia, x] = stepsize
+        for ix in range(3 * natm):
+            dv_ia_x = _fd(
+                scan_obj=scan_obj, xyz=xyz,
+                ix=ix, atmlst=atmlst, 
+                stepsize=stepsize,
+                v0=v0, dm0=dm0, 
+            )
+            dv_ao.append(dv_ia_x)
 
-                scan_obj(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
-                dm1 = scan_obj.make_rdm1()
-                v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nao, nao)
-                v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-                
-
-                scan_obj(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
-                dm2 = scan_obj.make_rdm1()
-                v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
-                v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-
-                assert v1.shape == v2.shape == (spin, nao, nao)
-
-                dv_ia_x = (v1 - v2) / (2 * stepsize)
-
-                for s in range(spin):
-                    dv_ia_x[s, p0:p1, :] -= v0[s, x, p0:p1]
-                    dv_ia_x[s, :, p0:p1] -= v0[s, x, p0:p1].T
-
-                dv_ao.append(dv_ia_x)
-
-        nao = self.mol.nao_nr()
-        dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nao, nao)
         self.dv_ao = self._finalize(dv_ao)
-
         return self.dv_ao
 
 if __name__ == '__main__':
@@ -252,42 +268,8 @@ if __name__ == '__main__':
     mf.kernel()
 
     # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
+    eph_obj = ElectronPhononCoupling(mf)
+    eph_obj.verbose = 0
+    dv_fd = eph_obj.kernel(stepsize=1e-4)
 
-    mf = scf.UHF(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.kernel()
-
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
-
-    mf = scf.RKS(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.xc = "LDA"
-    mf.kernel()
-
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
-
-    mf = scf.UKS(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.xc = "LDA"
-    mf.kernel()
-
-    # Test the finite difference against the analytic results
-    eph_fd = ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    dv_fd = eph_fd.kernel(stepsize=1e-4)
-    
+    res = harmonic_analysis(mol, hess=mf.Hessian().kernel(), dv_ao=dv_fd)

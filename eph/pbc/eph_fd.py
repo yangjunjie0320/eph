@@ -27,15 +27,6 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         self.unit = 'au'
         self.dv_ao = None
 
-def as_scanner(mf):
-    from pyscf import lib
-    if isinstance(mf, lib.SinglePointScanner):
-        return mf
-
-    logger.info(mf, 'Create scanner for %s', mf.__class__)
-    name = mf.__class__.__name__ + SCF_Scanner.__name_mixin__
-    return lib.set_class(SCF_Scanner(mf), (SCF_Scanner, mf.__class__), name)
-
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         if atmlst is None:
@@ -49,29 +40,19 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         scf_obj = self.base.to_kscf()
         kpts = scf_obj.kpts
-        if hasattr(scf_obj, '_numint'):
-            from pyscf.pbc.dft import numint
-            scf_obj._numint = numint.KNumInt(kpts)
-        scf_obj.with_df = self.base.with_df.__class__(cell)
-        scf_obj.verbose = 5 # self.verbose
+        if not isinstance(kpts, numpy.ndarray):
+            kpts = kpts.kpts
+        vk = kpts
+        nk = len(vk)
+
+        from pyscf.pbc.dft.numint import KNumInt
+        ni = getattr(scf_obj, '_numint', None)
+        if ni is not None and not isinstance(ni, KNumInt):
+            scf_obj._numint = KNumInt(kpts)
+
+        scf_obj.verbose = 5
         dm0 = scf_obj.make_rdm1()
-        print(dm0.shape)
-        n, exc, vxc = scf_obj._numint.nr_rks(
-            cell, scf_obj.grids, scf_obj.xc, dm0, 0,
-            hermi=1, kpt=scf_obj.kpts, 
-        )
-        print(n, exc, vxc)
-
-
-        veff = scf_obj.get_veff(dm=dm0)
-
-
-
-        # scf_obj.kernel(dm0=dm0)
-        assert 1 == 2
-
-        kpts = vk = scf_obj.kpts
-        nk = len(scf_obj.kpts)
+        scf_obj.kernel(dm0=dm0)
 
         dm0 = scf_obj.make_rdm1()
         nao = cell.nao_nr()
@@ -102,13 +83,13 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dxyz = numpy.zeros_like(xyz)
                 dxyz[ia, x] = stepsize
 
-                scan_obj(cell.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
+                scan_obj(xyz + dxyz, inplace=False, unit='B', dm0=dm0)
                 dm1 = scan_obj.make_rdm1()
                 v1  = scan_obj.get_veff(dm_kpts=dm1).reshape(spin, nk, nao, nao)
                 v1 += scan_obj.get_hcore().reshape(1, nk, nao, nao)
                 v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts)).reshape(1, nk, nao, nao)
 
-                scan_obj(cell.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
+                scan_obj(xyz - dxyz, dm0=dm0)
                 dm2 = scan_obj.make_rdm1()
                 v2  = scan_obj.get_veff(dm_kpts=dm2).reshape(spin, nk, nao, nao)
                 v2 += scan_obj.get_hcore().reshape(nk, 1, nao, nao)
