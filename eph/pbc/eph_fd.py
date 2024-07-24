@@ -31,117 +31,121 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
 def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
     ia, x = atmlst[ix // 3], ix % 3
     
-    nk = len(kpts)
-    cell = scan_obj.cell
-    nao = cell.nao_nr()
-    p0, p1 = cell.aoslice_by_atom()[ia][2:4]
+    nao = scan_obj.cell.nao_nr()
+    scan_obj.verbose = 10
+    p0, p1 = scan_obj.cell.aoslice_by_atom()[ia][2:4]
 
     spin, nk = dm0.shape[:2]
     spin = dm0.shape[0]
     assert v0.shape == (spin, 3, nk, nao, nao)
+    assert kpts.shape == (nk, 3)
 
     dxyz = numpy.zeros_like(xyz)
     dxyz[ia, x] = stepsize
 
-    m1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-    scan_obj(m1, dm0=dm0[0] if spin == 1 else dm0)
+    c1 = scan_obj.cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+    scan_obj(c1, dm0=dm0[0] if spin == 1 else dm0)
     dm1 = scan_obj.make_rdm1()
     v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
-    v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+    v1 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
     
-    m2 = scan_obj.mol.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-    scan_obj(m2, dm0=dm0[0] if spin == 1 else dm0)
+    c2 = scan_obj.cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+    scan_obj(c2, dm0=dm0[0] if spin == 1 else dm0)
     dm2 = scan_obj.make_rdm1()
-    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
-    v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
+    v2 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
 
-    assert v1.shape == v2.shape == (spin, nao, nao)
+    assert v1.shape == v2.shape == (spin, nk, nao, nao)
 
     dv_ia_x = (v1 - v2) / (2 * stepsize)
-    dv_ia_x[:, p0:p1, :] -= v0[:, x, p0:p1, :]
-    dv_ia_x[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1)
+    dv_ia_x[:, :, p0:p1, :] -= v0[:, x, :, p0:p1, :]
+    dv_ia_x[:, :, :, p0:p1] -= v0[:, x, :, p0:p1, :].transpose(0, 1, 3, 2)
+    assert 1 == 2
     return dv_ia_x.reshape(spin, nao, nao)
 
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         cell = self.cell
+        nao = cell.nao_nr()
+        xyz = cell.atom_coords(unit="Bohr")
+
         if atmlst is None:
             atmlst = range(cell.natm)
 
+        natm = len(atmlst)
         self.dump_flags()
-
-        cell = self.cell
-        xyz = cell.atom_coords()
-        aoslices = cell.aoslice_by_atom()
 
         scf_obj = self.base.to_kscf()
         kpts = scf_obj.kpts
         if not isinstance(kpts, numpy.ndarray):
             kpts = kpts.kpts
-        vk = kpts
-        nk = len(vk)
+        nk = len(kpts)
 
         from pyscf.pbc.dft.numint import KNumInt
         ni = getattr(scf_obj, '_numint', None)
         if ni is not None and not isinstance(ni, KNumInt):
             scf_obj._numint = KNumInt(kpts)
 
-        scf_obj.verbose = 5
-        dm0 = scf_obj.make_rdm1()
-        scf_obj.kernel(dm0=dm0)
-
-        dm0 = scf_obj.make_rdm1()
-        nao = cell.nao_nr()
-        dm0 = numpy.asarray(dm0).reshape(-1, nk, nao, nao)
-        spin = dm0.shape[0]
-
         scan_obj = scf_obj.as_scanner()
         grad_obj = scf_obj.nuc_grad_method()
 
-        from pyscf.pbc.grad import rhf as rhf_grad
-        from pyscf.pbc.grad import rks as rks_grad
-        veff = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
-        veff = veff.reshape(spin, 3, nk, nao, nao) # check this
+        dm0 = scf_obj.make_rdm1()
+        dm0 = dm0.reshape(-1, nk, nao, nao)
+        spin = dm0.shape[0]
+        scf_obj.verbose = 10
+        scf_obj.kernel(dm0=dm0[0] if spin == 1 else dm0)
+        assert scf_obj.converged
 
-        v1e  = grad_obj.get_hcore()
-        v1e -= numpy.asarray(grad_obj.cell.pbc_intor('int1e_ipkin', comp=3, kpts=kpts))
-        v1e  = v1e.reshape(nk, 3, 1, nao, nao)
-        v0 = veff - numpy.einsum('kxsmn->sxkmn', v1e)
+        dm0 = scf_obj.make_rdm1().reshape(spin, nk, nao, nao)
+        v0 = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
+        v0 = v0.reshape(spin, 3, nk, nao, nao)
+        v0 += grad_obj.get_hcore().transpose(1, 0, 2, 3)
+        v0 += numpy.asarray(grad_obj.cell.pbc_intor('int1e_ipkin', kpts=kpts, comp=3)).transpose(1, 0, 2, 3)
         assert v0.shape == (spin, 3, nk, nao, nao)
 
         dv_ao = []
-        for i0, ia in enumerate(atmlst):
-            s0, s1, p0, p1 = aoslices[ia]
-            for x in range(3):
-                dxyz = numpy.zeros_like(xyz)
-                dxyz[ia, x] = stepsize
+        for ix in range(3 * natm):
+            dv_ia_x = _fd(
+                scan_obj=scan_obj, xyz=xyz,
+                ix=ix, atmlst=atmlst, 
+                stepsize=stepsize,
+                v0=v0, dm0=dm0, kpts=kpts
+            )
+            dv_ao.append(dv_ia_x)
 
-                scan_obj(xyz + dxyz, inplace=False, unit='B', dm0=dm0)
-                dm1 = scan_obj.make_rdm1()
-                v1  = scan_obj.get_hcore()
-                v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
-                v1  = v1.reshape(1, nk, nao, nao)
-                v1 += scan_obj.get_veff(dm_kpts=dm1).reshape(spin, nk, nao, nao)
+        # for i0, ia in enumerate(atmlst):
+        #     s0, s1, p0, p1 = aoslices[ia]
+        #     for x in range(3):
+        #         dxyz = numpy.zeros_like(xyz)
+        #         dxyz[ia, x] = stepsize
+
+        #         m1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+        #         scan_obj(m1, dm0=dm0[0] if spin == 1 else dm0)
+        #         dm1 = scan_obj.make_rdm1()
+        #         v1  = scan_obj.get_hcore()
+        #         v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
+        #         v1  = v1.reshape(1, nk, nao, nao)
+        #         v1 += scan_obj.get_veff(dm_kpts=dm1).reshape(spin, nk, nao, nao)
                 
 
-                scan_obj(xyz - dxyz, dm0=dm0)
-                dm2 = scan_obj.make_rdm1()
-                v2  = scan_obj.get_hcore()
-                v2 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
-                v2  = v2.reshape(1, nk, nao, nao)
-                v2 += scan_obj.get_veff(dm_kpts=dm2).reshape(spin, nk, nao, nao)
+        #         scan_obj(xyz - dxyz, dm0=dm0)
+        #         dm2 = scan_obj.make_rdm1()
+        #         v2  = scan_obj.get_hcore()
+        #         v2 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
+        #         v2  = v2.reshape(1, nk, nao, nao)
+        #         v2 += scan_obj.get_veff(dm_kpts=dm2).reshape(spin, nk, nao, nao)
 
-                assert v1.shape == v2.shape == (spin, nk, nao, nao)
+        #         assert v1.shape == v2.shape == (spin, nk, nao, nao)
 
-                dv_ia_x = (v1 - v2) / (2 * stepsize)
+        #         dv_ia_x = (v1 - v2) / (2 * stepsize)
 
-                for s in range(spin):
-                    print(dv_ia_x[s, :, p0:p1, :].shape, v0[s, x, :, p0:p1].shape   )
-                    dv_ia_x[s, :, p0:p1, :] -= v0[s, x, :, p0:p1, :]
-                    dv_ia_x[s, :, :, p0:p1] -= v0[s, x, :, p0:p1].transpose(0, 2, 1)
+        #         for s in range(spin):
+        #             print(dv_ia_x[s, :, p0:p1, :].shape, v0[s, x, :, p0:p1].shape   )
+        #             dv_ia_x[s, :, p0:p1, :] -= v0[s, x, :, p0:p1, :]
+        #             dv_ia_x[s, :, :, p0:p1] -= v0[s, x, :, p0:p1].transpose(0, 2, 1)
 
-                dv_ao.append(dv_ia_x)
+        #         dv_ao.append(dv_ia_x)
 
         dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nk, nao, nao)
         print(dv_ao.shape)
@@ -169,6 +173,7 @@ if __name__ == '__main__':
     """
     cell.basis  = 'gth-szv'
     cell.pseudo = 'gth-pade'
+    cell.mesh = [10] * 3
     cell.build()
 
     from pyscf.pbc import df
@@ -181,4 +186,4 @@ if __name__ == '__main__':
     mf.kernel()
 
     eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel()
+    dv_sol  = eph_obj.kernel(stepsize=0.0)

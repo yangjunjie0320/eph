@@ -209,6 +209,7 @@ def _fd(scan_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, x
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         mol = self.mol
+        nao = mol.nao_nr()
         xyz = mol.atom_coords(unit="Bohr")
 
         if atmlst is None:
@@ -217,21 +218,19 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         natm = len(atmlst)
         self.dump_flags()
 
-        dm0 = self.base.make_rdm1()
-        nao = mol.nao_nr()
-        dm0 = dm0.reshape(-1, nao, nao)
-        spin = dm0.shape[0]
-        if spin == 1:
-            dm0 = dm0[0]
-
         scf_obj = self.base
         scan_obj = scf_obj.as_scanner()
         grad_obj = scf_obj.nuc_grad_method()
 
-        v0  = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore()
-        v0 += scf_obj.mol.intor("int1e_ipkin")
-        v0 = v0.reshape(spin, 3, nao, nao)
+        dm0 = scf_obj.make_rdm1()
+        dm0 = dm0.reshape(-1, nao, nao)
+        spin = dm0.shape[0]
 
+        v0  = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
+        v0  = v0.reshape(spin, 3, nao, nao)
+        v0 += grad_obj.get_hcore()
+        v0 += mol.intor("int1e_ipkin")
+    
         dv_ao = []
         for ix in range(3 * natm):
             dv_ia_x = _fd(
