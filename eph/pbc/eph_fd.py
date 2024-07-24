@@ -48,7 +48,10 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         aoslices = cell.aoslice_by_atom()
 
         scf_obj = self.base.to_kscf()
-        scf_obj.verbose = self.verbose
+        scf_obj.verbose = 5 # self.verbose
+        print(scf_obj.mo_occ)
+        print(scf_obj.mo_energy)
+        print(scf_obj.mo_coeff)
         scf_obj.kernel()
 
         kpts = vk = scf_obj.kpts
