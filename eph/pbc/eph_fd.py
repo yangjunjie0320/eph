@@ -135,9 +135,9 @@ if __name__ == '__main__':
     from pyscf.pbc import df
     from pyscf.pbc import scf as pbcscf
 
-    mf = pbcscf.RHF(cell)
+    mf = pbcscf.RKS(cell)
     # mf.with_df = df.GDF(cell)
-    # mf.xc = "PBE"
+    mf.xc = "PBE"
     mf.init_guess = 'atom' # atom guess is fast
     mf.kernel()
 
