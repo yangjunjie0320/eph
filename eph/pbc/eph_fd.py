@@ -46,38 +46,45 @@ def _get_v0(scf_obj, dm0):
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         if atmlst is None:
-            atmlst = range(self.mol.natm)
+            atmlst = range(self.cell.natm)
 
         self.dump_flags()
 
-        mol = self.mol
-        xyz = mol.atom_coords()
-        aoslices = mol.aoslice_by_atom()
+        cell = self.cell
+        xyz = cell.atom_coords()
+        aoslices = cell.aoslice_by_atom()
 
         scf_obj = self.base.to_kscf()
         scf_obj.kernel()
 
-        vk = scf_obj.kpts
+        kpts = vk = scf_obj.kpts
         nk = len(scf_obj.kpts)
 
-        print(scf_obj, nk, scf_obj.kpts)
-
         dm0 = scf_obj.make_rdm1()
-        nao = mol.nao_nr()
-        # dm0 = numpy.asarray(dm0).reshape(-1, nk, nao, nao)
-        # spin = dm0.shape[1]
+        nao = cell.nao_nr()
+        dm0 = numpy.asarray(dm0).reshape(-1, nk, nao, nao)
+        spin = dm0.shape[1]
 
-        # if spin == 1:
-        #     dm0 = dm0[:, 0, :, :]
+        if spin == 1:
+            dm0 = dm0[0]
 
         scan_obj = self.base.as_scanner()
+        print(scan_obj)
+        assert 1 == 2
+
         grad_obj = self.base.to_kscf().nuc_grad_method()
 
         from pyscf.pbc.grad import rhf as rhf_grad
         from pyscf.pbc.grad import rks as rks_grad
-        v0 = grad_obj.get_veff(dm=dm0) + grad_obj.get_hcore() + scf_obj.cell.pbc_intor("int1e_ipkin", kpts=vk)
-        print(v0.shape)
-        # v0 = v0.reshape(spin, 3, nao, nao)
+        veff = grad_obj.get_veff(dm=dm0)
+        print(veff.shape)
+        veff = veff.reshape(spin, 3, nk, nao, nao) # check this
+        assert veff.shape == (spin, 3, nk, nao, nao)
+
+        v1  = grad_obj.get_hcore()
+        v1 -= numpy.asarray(grad_obj.cell.pbc_intor('int1e_ipkin', comp=3, kpts=kpts))
+        v1 = v1.reshape(nk, 3, 1, nao, nao)
+        v0 = veff - numpy.einsum('kxsmn->sxkmn', v1)
 
         dv_ao = []
         for i0, ia in enumerate(atmlst):
@@ -86,18 +93,19 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 dxyz = numpy.zeros_like(xyz)
                 dxyz[ia, x] = stepsize
 
-                scan_obj(mol.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
+                scan_obj(cell.set_geom_(xyz + dxyz, inplace=False, unit='B'), dm0=dm0)
                 dm1 = scan_obj.make_rdm1()
-                v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nao, nao)
-                v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
-                
+                v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
+                v1 += scan_obj.get_hcore().reshape(1, nk, nao, nao)
+                v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts)).reshape(1, nk, nao, nao)
 
-                scan_obj(mol.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
+                scan_obj(cell.set_geom_(xyz - dxyz, inplace=False, unit='B'), dm0=dm0)
                 dm2 = scan_obj.make_rdm1()
-                v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
-                v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+                v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
+                v2 += scan_obj.get_hcore().reshape(nk, 1, nao, nao)
+                v2 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts)).reshape(1, nk, nao, nao)
 
-                assert v1.shape == v2.shape == (spin, nao, nao)
+                assert v1.shape == v2.shape == (spin, nk, nao, nao)
 
                 dv_ia_x = (v1 - v2) / (2 * stepsize)
 
@@ -107,11 +115,12 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
                 dv_ao.append(dv_ia_x)
 
-        nao = self.mol.nao_nr()
-        dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nao, nao)
-        self.dv_ao = self._finalize(dv_ao)
+        assert 1 == 2
+        # nao = self.mol.nao_nr()
+        # dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nk, nao, nao)
+        # self.dv_ao = self._finalize(dv_ao)
 
-        return self.dv_ao
+        # return self.dv_ao
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
@@ -128,20 +137,17 @@ if __name__ == '__main__':
     He 1.000000 1.000000 2.000000
     He 1.000000 1.000000 4.000000
     """
-    cell.basis = 'gth-dzv'
+    cell.basis  = 'gth-szv'
     cell.pseudo = 'gth-pade'
     cell.build()
 
+    from pyscf.pbc import df
     from pyscf.pbc import scf as pbcscf
-    from pyscf.pbc import dft as pbcdft
-    from pyscf.pbc.dft import multigrid
 
     mf = pbcscf.RHF(cell)
-    #mf.xc = "LDA, VWN"
+    mf.with_df = df.GDF(cell)
     # mf.xc = "PBE"
     mf.init_guess = 'atom' # atom guess is fast
-    # mf.with_df = multigrid.MultiGridFFTDF2(cell)
-    # mf.with_df.ngrids = 4 # number of sets of grid points
     mf.kernel()
 
     eph_obj = ElectronPhononCoupling(mf)
