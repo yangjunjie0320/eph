@@ -60,12 +60,42 @@ def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, 
 
     assert v1.shape == v2.shape == (spin, nk, nao, nao)
 
+    assert 1 == 2
     dv_ia_x = (v1 - v2) / (2 * stepsize)
     dv_ia_x[:, :, p0:p1, :] -= v0[:, x, :, p0:p1, :]
     dv_ia_x[:, :, :, p0:p1] -= v0[:, x, :, p0:p1, :].transpose(0, 1, 3, 2)
-    assert 1 == 2
     return dv_ia_x.reshape(spin, nao, nao)
 
+
+def as_scanner(kscf):
+    class Scanner(object):
+        def __init__(self, kscf):
+            self.cell = kscf.cell
+            
+            assert isinstance(kscf, scf.khf.KRHF)
+            self.method = kscf.__class__
+            kpts = kscf.kpts
+            if not isinstance(kpts, numpy.ndarray):
+                kpts = kpts.kpts
+            self.kpts = kpts
+
+        def __call__(self, cell, dm0=None):
+            self.kscf = None
+            self.kscf = self.method(cell, kpts=self.kpts)
+            self.cell = cell
+            res = self.kscf.kernel(dm0=dm0)
+            return res
+        
+        def make_rdm1(self):
+            return self.kscf.make_rdm1()
+        
+        def get_hcore(self):
+            return self.kscf.get_hcore()
+        
+        def get_veff(self, dm=None):
+            return self.kscf.get_veff(dm=dm)
+        
+    return Scanner(kscf)
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
@@ -90,7 +120,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if ni is not None and not isinstance(ni, KNumInt):
             scf_obj._numint = KNumInt(kpts)
 
-        scan_obj = scf_obj.as_scanner()
+        scan_obj = as_scanner(scf_obj)
         grad_obj = scf_obj.nuc_grad_method()
 
         dm0 = scf_obj.make_rdm1()
