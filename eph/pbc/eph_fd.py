@@ -34,6 +34,7 @@ def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, 
     nao = scan_obj.cell.nao_nr()
     scan_obj.verbose = 10
     p0, p1 = scan_obj.cell.aoslice_by_atom()[ia][2:4]
+    print(dm0)
 
     spin, nk = dm0.shape[:2]
     spin = dm0.shape[0]
@@ -46,12 +47,14 @@ def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, 
     c1 = scan_obj.cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
     scan_obj(c1, dm0=dm0[0] if spin == 1 else dm0)
     dm1 = scan_obj.make_rdm1()
+    print(dm1)
     v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
     v1 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
     
     c2 = scan_obj.cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
     scan_obj(c2, dm0=dm0[0] if spin == 1 else dm0)
     dm2 = scan_obj.make_rdm1()
+    print(dm2)
     v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
     v2 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
 
