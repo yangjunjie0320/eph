@@ -48,11 +48,27 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         aoslices = cell.aoslice_by_atom()
 
         scf_obj = self.base.to_kscf()
+        kpts = scf_obj.kpts
+        if hasattr(scf_obj, '_numint'):
+            from pyscf.pbc.dft import numint
+            scf_obj._numint = numint.KNumInt(kpts)
+        scf_obj.with_df = self.base.with_df.__class__(cell)
         scf_obj.verbose = 5 # self.verbose
-        print(scf_obj.mo_occ)
-        print(scf_obj.mo_energy)
-        print(scf_obj.mo_coeff)
-        scf_obj.kernel()
+        dm0 = scf_obj.make_rdm1()
+        print(dm0.shape)
+        n, exc, vxc = scf_obj._numint.nr_rks(
+            cell, scf_obj.grids, scf_obj.xc, dm0, 0,
+            hermi=1, kpt=scf_obj.kpts, 
+        )
+        print(n, exc, vxc)
+
+
+        veff = scf_obj.get_veff(dm=dm0)
+
+
+
+        # scf_obj.kernel(dm0=dm0)
+        assert 1 == 2
 
         kpts = vk = scf_obj.kpts
         nk = len(scf_obj.kpts)
