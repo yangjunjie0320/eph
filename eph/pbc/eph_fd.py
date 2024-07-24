@@ -13,6 +13,7 @@ from pyscf import hessian
 import eph
 from eph.mol import eph_fd, uhf
 
+# PBC electron-phonon coupling base class
 class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
     def __init__(self, method):
         self.verbose = method.verbose
@@ -27,10 +28,46 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         self.unit = 'au'
         self.dv_ao = None
 
+def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
+    ia, x = atmlst[ix // 3], ix % 3
+    
+    nk = len(kpts)
+    cell = scan_obj.cell
+    nao = cell.nao_nr()
+    p0, p1 = cell.aoslice_by_atom()[ia][2:4]
+
+    spin, nk = dm0.shape[:2]
+    spin = dm0.shape[0]
+    assert v0.shape == (spin, 3, nk, nao, nao)
+
+    dxyz = numpy.zeros_like(xyz)
+    dxyz[ia, x] = stepsize
+
+    m1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+    scan_obj(m1, dm0=dm0[0] if spin == 1 else dm0)
+    dm1 = scan_obj.make_rdm1()
+    v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
+    v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+    
+    m2 = scan_obj.mol.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+    scan_obj(m2, dm0=dm0[0] if spin == 1 else dm0)
+    dm2 = scan_obj.make_rdm1()
+    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
+    v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+
+    assert v1.shape == v2.shape == (spin, nao, nao)
+
+    dv_ia_x = (v1 - v2) / (2 * stepsize)
+    dv_ia_x[:, p0:p1, :] -= v0[:, x, p0:p1, :]
+    dv_ia_x[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1)
+    return dv_ia_x.reshape(spin, nao, nao)
+
+
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
+        cell = self.cell
         if atmlst is None:
-            atmlst = range(self.cell.natm)
+            atmlst = range(cell.natm)
 
         self.dump_flags()
 
@@ -59,15 +96,12 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dm0 = numpy.asarray(dm0).reshape(-1, nk, nao, nao)
         spin = dm0.shape[0]
 
-        if spin == 1:
-            dm0 = dm0[0]
-
         scan_obj = scf_obj.as_scanner()
         grad_obj = scf_obj.nuc_grad_method()
 
         from pyscf.pbc.grad import rhf as rhf_grad
         from pyscf.pbc.grad import rks as rks_grad
-        veff = grad_obj.get_veff(dm=dm0)
+        veff = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
         veff = veff.reshape(spin, 3, nk, nao, nao) # check this
 
         v1e  = grad_obj.get_hcore()
@@ -85,15 +119,18 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
                 scan_obj(xyz + dxyz, inplace=False, unit='B', dm0=dm0)
                 dm1 = scan_obj.make_rdm1()
-                v1  = scan_obj.get_veff(dm_kpts=dm1).reshape(spin, nk, nao, nao)
-                v1 += scan_obj.get_hcore().reshape(1, nk, nao, nao)
-                v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts)).reshape(1, nk, nao, nao)
+                v1  = scan_obj.get_hcore()
+                v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
+                v1  = v1.reshape(1, nk, nao, nao)
+                v1 += scan_obj.get_veff(dm_kpts=dm1).reshape(spin, nk, nao, nao)
+                
 
                 scan_obj(xyz - dxyz, dm0=dm0)
                 dm2 = scan_obj.make_rdm1()
-                v2  = scan_obj.get_veff(dm_kpts=dm2).reshape(spin, nk, nao, nao)
-                v2 += scan_obj.get_hcore().reshape(nk, 1, nao, nao)
-                v2 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts)).reshape(1, nk, nao, nao)
+                v2  = scan_obj.get_hcore()
+                v2 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
+                v2  = v2.reshape(1, nk, nao, nao)
+                v2 += scan_obj.get_veff(dm_kpts=dm2).reshape(spin, nk, nao, nao)
 
                 assert v1.shape == v2.shape == (spin, nk, nao, nao)
 
@@ -106,6 +143,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
                 dv_ao.append(dv_ia_x)
 
+        dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nk, nao, nao)
+        print(dv_ao.shape)
         assert 1 == 2
         # nao = self.mol.nao_nr()
         # dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nk, nao, nao)
