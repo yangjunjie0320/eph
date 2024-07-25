@@ -210,7 +210,7 @@ if __name__ == '__main__':
     # mf.with_df = df.GDF(cell)
     mf.xc = "PBE"
     mf.init_guess = 'atom' # atom guess is fast
-    mf.verbose = 0
+    mf.verbose = 3
     mf.kernel()
 
     eph_obj = ElectronPhononCoupling(mf)
