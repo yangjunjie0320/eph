@@ -92,8 +92,8 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     c1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
     s1 = scf_obj.__class__(c1)
     s1.kpts = kpts
-    if hasattr(scf_obj, 'with_df'):
-        s1.with_df = scf_obj.with_df.__class__(c1)
+    # if hasattr(scf_obj, 'with_df'):
+    #     s1.with_df = scf_obj.with_df.__class__(c1)
 
     if hasattr(scf_obj, 'xc'):
         s1.xc = scf_obj.xc
@@ -112,8 +112,8 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     c2 = cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
     s2 = scf_obj.__class__(c2)
     s2.kpts = kpts
-    if hasattr(scf_obj, 'with_df'):
-        s2.with_df = scf_obj.with_df.__class__(c2)
+    # if hasattr(scf_obj, 'with_df'):
+    #     s2.with_df = scf_obj.with_df.__class__(c2)
 
     if hasattr(scf_obj, 'xc'):
         s2.xc = scf_obj.xc
