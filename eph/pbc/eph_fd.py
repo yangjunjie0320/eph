@@ -28,11 +28,12 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         self.unit = 'au'
         self.dv_ao = None
 
-def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
+def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
     ia, x = atmlst[ix // 3], ix % 3
     
     nao = scan_obj.cell.nao_nr()
     scan_obj.verbose = 10
+    kpts = scan_obj.kpts
     p0, p1 = scan_obj.cell.aoslice_by_atom()[ia][2:4]
     print(dm0)
 
@@ -43,15 +44,34 @@ def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, 
 
     dxyz = numpy.zeros_like(xyz)
     dxyz[ia, x] = stepsize
+    dxyz = dxyz.reshape(-1, 3)
 
     c1 = scan_obj.cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-    scan_obj(c1, dm0=dm0[0] if spin == 1 else dm0)
+    c1.verbose = 10
+    c1.build(dump_input=True)
+
+    s1 = scan_obj.__class__(c1, kpts=kpts)
+    s1.kpts = kpts
+    s1.exxdiv = getattr(scan_obj, 'exxdiv', None)
+    s1.verbose = 10
+    if hasattr(scan_obj, 'xc'):
+        s1.xc = scan_obj.xc
+    
+    s1.kernel(dm0=dm0[0] if spin == 1 else dm0)
     dm1 = scan_obj.make_rdm1()
-    print(dm1)
+    ovlp0 = scan_obj.get_ovlp()
+    ovlp1 = s1.get_ovlp()
+
+    print("get_ovlp0 = ", scan_obj.get_ovlp)
+    print("ovlp0 = ", ovlp0)
+    print("get_ovlp1 = ", s1.get_ovlp)
+    print("ovlp1 = ", ovlp1)
     v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
     v1 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
+    assert 1 == 2
     
     c2 = scan_obj.cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+    mf2 = None
     scan_obj(c2, dm0=dm0[0] if spin == 1 else dm0)
     dm2 = scan_obj.make_rdm1()
     print(dm2)
@@ -66,37 +86,6 @@ def _fd(scan_obj=None, ix=None, kpts=None, atmlst=None, stepsize=1e-4, v0=None, 
     dv_ia_x[:, :, :, p0:p1] -= v0[:, x, :, p0:p1, :].transpose(0, 1, 3, 2)
     return dv_ia_x.reshape(spin, nao, nao)
 
-
-def as_scanner(kscf):
-    class Scanner(object):
-        def __init__(self, kscf):
-            self.cell = kscf.cell
-            
-            assert isinstance(kscf, scf.khf.KRHF)
-            self.method = kscf.__class__
-            kpts = kscf.kpts
-            if not isinstance(kpts, numpy.ndarray):
-                kpts = kpts.kpts
-            self.kpts = kpts
-
-        def __call__(self, cell, dm0=None):
-            self.kscf = None
-            self.kscf = self.method(cell, kpts=self.kpts)
-            self.cell = cell
-            res = self.kscf.kernel(dm0=dm0)
-            return res
-        
-        def make_rdm1(self):
-            return self.kscf.make_rdm1()
-        
-        def get_hcore(self):
-            return self.kscf.get_hcore()
-        
-        def get_veff(self, dm=None):
-            return self.kscf.get_veff(dm=dm)
-        
-    return Scanner(kscf)
-
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         cell = self.cell
@@ -108,6 +97,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         natm = len(atmlst)
         self.dump_flags()
+        
+        cell.verbose = 10
+        cell.build(dump_input=True)
 
         scf_obj = self.base.to_kscf()
         kpts = scf_obj.kpts
@@ -120,7 +112,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if ni is not None and not isinstance(ni, KNumInt):
             scf_obj._numint = KNumInt(kpts)
 
-        scan_obj = as_scanner(scf_obj)
+        # scan_obj = as_scanner(scf_obj)
+        scan_obj = scf_obj
         grad_obj = scf_obj.nuc_grad_method()
 
         dm0 = scf_obj.make_rdm1()
@@ -140,7 +133,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dv_ao = []
         for ix in range(3 * natm):
             dv_ia_x = _fd(
-                scan_obj=scan_obj, xyz=xyz,
+                scan_obj=scf_obj, xyz=xyz,
                 ix=ix, atmlst=atmlst, 
                 stepsize=stepsize,
                 v0=v0, dm0=dm0, kpts=kpts
@@ -216,7 +209,21 @@ if __name__ == '__main__':
     # mf.with_df = df.GDF(cell)
     mf.xc = "PBE"
     mf.init_guess = 'atom' # atom guess is fast
+    mf.verbose = 10
     mf.kernel()
 
-    eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel(stepsize=0.0)
+    # eph_obj = ElectronPhononCoupling(mf)
+    # dv_sol  = eph_obj.kernel(stepsize=0.0)
+
+    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs
+    disp = 1e-2
+
+    mf = mf.to_kscf()
+    cell = mf.cell
+    cells_a, cells_b = gen_cells(cell, disp/2.0) # generate a bunch of cells with disp/2 on each cartesian coord
+    mf.verbose = 10
+    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
+    # vmat = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
+    # hmat = run_hess(mfset, disp)
+    # omega, vec = solve_hmat(cell, hmat)
+    # mass = cell.atom_mass_list() * MP_ME
