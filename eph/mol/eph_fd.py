@@ -174,43 +174,81 @@ class ElectronPhononCouplingBase(lib.StreamObject):
     def kernel(self):
         raise NotImplementedError
     
-def _fd(scan_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
-    ia = atmlst[ix // 3]
-    x = ix % 3
-    nao = scan_obj.mol.nao_nr()
-    p0, p1 = scan_obj.mol.aoslice_by_atom()[ia][2:]
+def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
+    ia, x = atmlst[ix // 3], ix % 3
+
+    mol = scf_obj.mol
+    stdout = mol.stdout
+    s = mol.aoslice_by_atom()
+    nao = s[-1][-1]
+    p0, p1 = s[ia][2:]
 
     dm0 = dm0.reshape(-1, nao, nao)
     spin = dm0.shape[0]
     assert v0.shape == (spin, 3, nao, nao)
 
+    xyz = mol.atom_coords(unit="Bohr")
     dxyz = numpy.zeros_like(xyz)
     dxyz[ia, x] = stepsize
+    dxyz = dxyz.reshape(-1, 3)
 
-    m1 = scan_obj.mol.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-    scan_obj(m1, dm0=dm0[0] if spin == 1 else dm0)
-    dm1 = scan_obj.make_rdm1()
-    v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nao, nao)
-    v1 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+    if scf_obj.verbose >= logger.DEBUG:
+        info = "Finite difference for atom %d, direction %d" % (ia, x)
+        stdout.write("\n" + "*" * len(info) + "\n")
+        stdout.write(info + "\n")
+        stdout.write("\noriginal geometry (bohr):\n")
+        numpy.savetxt(stdout, xyz, fmt="% 12.8f", delimiter=", ")
+        stdout.write("\nperturbed geometry 1 (bohr):\n")
+        numpy.savetxt(stdout, xyz + dxyz, fmt="% 12.8f", delimiter=", ")
+        stdout.write("\nperturbed geometry 2 (bohr):\n")
+        numpy.savetxt(stdout, xyz - dxyz, fmt="% 12.8f", delimiter=", ")
+
+    m1 = mol.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+    s1 = scf_obj.__class__(m1)
+    if hasattr(scf_obj, 'with_df'):
+        s1.with_df = scf_obj.with_df.reset(mol=m1)
+
+    if hasattr(scf_obj, 'xc'):
+        s1.xc = scf_obj.xc
+
+    s1.conv_tol = scf_obj.conv_tol
+    s1.conv_tol_grad = scf_obj.conv_tol_grad
+    s1.max_cycle = scf_obj.max_cycle
+    s1.verbose = scf_obj.verbose
+    s1.kernel(dm0=dm0[0] if spin == 1 else dm0)
+
+    dm1 = s1.make_rdm1()
+    v1 = s1.get_veff(dm=dm1).reshape(spin, nao, nao)
+    v1 += s1.get_hcore() - m1.intor("int1e_kin")
+
+    m2 = mol.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+    s2 = scf_obj.__class__(m2)
+    if hasattr(scf_obj, 'with_df'):
+        s2.with_df = scf_obj.with_df.reset(mol=m2)
     
-    m2 = scan_obj.mol.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-    scan_obj(m2, dm0=dm0[0] if spin == 1 else dm0)
-    dm2 = scan_obj.make_rdm1()
-    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nao, nao)
-    v2 += scan_obj.get_hcore() - scan_obj.mol.intor_symmetric("int1e_kin")
+    if hasattr(scf_obj, 'xc'):
+        s2.xc = scf_obj.xc
+
+    s2.conv_tol = scf_obj.conv_tol
+    s2.conv_tol_grad = scf_obj.conv_tol_grad
+    s2.max_cycle = scf_obj.max_cycle
+    s2.verbose = scf_obj.verbose
+    s2.kernel(dm0=dm0[0] if spin == 1 else dm0)
+
+    dm2 = s2.make_rdm1()
+    v2 = s2.get_veff(dm=dm2).reshape(spin, nao, nao)
+    v2 += s2.get_hcore() - m2.intor("int1e_kin")
 
     assert v1.shape == v2.shape == (spin, nao, nao)
-
-    dv_ia_x = (v1 - v2) / (2 * stepsize)
-    dv_ia_x[:, p0:p1, :] -= v0[:, x, p0:p1, :]
-    dv_ia_x[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1)
-    return dv_ia_x.reshape(spin, nao, nao)
+    dv = (v1 - v2) / (2 * stepsize)
+    dv[:, p0:p1, :] -= v0[:, x, p0:p1, :]
+    dv[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1)
+    return dv
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         mol = self.mol
         nao = mol.nao_nr()
-        xyz = mol.atom_coords(unit="Bohr")
 
         if atmlst is None:
             atmlst = range(mol.natm)
@@ -219,9 +257,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         self.dump_flags()
 
         scf_obj = self.base
-        scan_obj = scf_obj.as_scanner()
         grad_obj = scf_obj.nuc_grad_method()
 
+        assert scf_obj.converged
         dm0 = scf_obj.make_rdm1()
         dm0 = dm0.reshape(-1, nao, nao)
         spin = dm0.shape[0]
@@ -233,13 +271,11 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
     
         dv_ao = []
         for ix in range(3 * natm):
-            dv_ia_x = _fd(
-                scan_obj=scan_obj, xyz=xyz,
-                ix=ix, atmlst=atmlst, 
-                stepsize=stepsize,
-                v0=v0, dm0=dm0, 
-            )
-            dv_ao.append(dv_ia_x)
+            dv_ao_ia_x = _fd(
+                scf_obj=scf_obj, ix=ix, atmlst=atmlst, 
+                stepsize=stepsize, v0=v0, dm0=dm0
+                )
+            dv_ao.append(dv_ao_ia_x)
 
         self.dv_ao = self._finalize(dv_ao)
         return self.dv_ao

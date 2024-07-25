@@ -28,80 +28,127 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         self.unit = 'au'
         self.dv_ao = None
 
-def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None, xyz=None):
-    ia, x = atmlst[ix // 3], ix % 3
-    
-    nao = scan_obj.cell.nao_nr()
-    scan_obj.verbose = 10
-    kpts = scan_obj.kpts
-    p0, p1 = scan_obj.cell.aoslice_by_atom()[ia][2:4]
-    print(dm0)
+    def _finalize(self, dv_ao):
+        assert dv_ao is not None
+        if not isinstance(dv_ao, numpy.ndarray):
+            spin = dv_ao[0].shape[0]
+            nao = dv_ao[0].shape[-1]
+            nk = dv_ao[0].shape[1]
 
+            dv_ao = numpy.asarray(dv_ao)
+            dv_ao = dv_ao.reshape(-1, 3, spin, nk, nao, nao)
+
+        natm, _, spin, nk, nao, _ = dv_ao.shape
+        assert dv_ao.shape == (natm, 3, spin, nk, nao, nao)
+
+        if spin == 1:
+            dv_ao = dv_ao.reshape(-1, nk, nao, nao)
+
+        elif spin == 2:
+            dv_ao = dv_ao.reshape(-1, 2, nk, nao, nao)
+            dv_ao = numpy.asarray((dv_ao[:, 0], dv_ao[:, 1]))
+            assert dv_ao.shape == (spin, natm * 3, nk, nao, nao)
+
+        else:
+            raise RuntimeError("spin = %d is not supported" % spin)
+
+        return dv_ao
+
+def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
+    ia, x = atmlst[ix // 3], ix % 3
+
+    cell = scf_obj.cell
+    stdout = scf_obj.stdout
+    s = cell.aoslice_by_atom()
+    nao = s[-1][-1]
+    p0, p1 = s[ia][2:]
+
+    kpts = scf_obj.kpts
+    if not isinstance(kpts, numpy.ndarray):
+        kpts = kpts.kpts
+    nk = len(kpts)
+
+    dm0 = dm0.reshape(-1, nk, nao, nao)
     spin, nk = dm0.shape[:2]
-    spin = dm0.shape[0]
     assert v0.shape == (spin, 3, nk, nao, nao)
     assert kpts.shape == (nk, 3)
 
+    xyz = cell.atom_coords(unit="Bohr")
     dxyz = numpy.zeros_like(xyz)
     dxyz[ia, x] = stepsize
     dxyz = dxyz.reshape(-1, 3)
 
-    c1 = scan_obj.cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-    c1.verbose = 10
-    c1.build(dump_input=True)
+    if scf_obj.verbose >= logger.DEBUG:
+        info = "Finite difference for atom %d, direction %d" % (ia, x)
+        stdout.write("\n" + "*" * len(info) + "\n")
+        stdout.write(info + "\n")
+        stdout.write("\noriginal geometry (bohr):\n")
+        numpy.savetxt(stdout, xyz, fmt="% 12.8f", delimiter=", ")
+        stdout.write("\nperturbed geometry 1 (bohr):\n")
+        numpy.savetxt(stdout, xyz + dxyz, fmt="% 12.8f", delimiter=", ")
+        stdout.write("\nperturbed geometry 2 (bohr):\n")
+        numpy.savetxt(stdout, xyz - dxyz, fmt="% 12.8f", delimiter=", ")
 
-    s1 = scan_obj.__class__(c1, kpts=kpts)
+    c1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+    s1 = scf_obj.__class__(c1)
     s1.kpts = kpts
-    s1.exxdiv = getattr(scan_obj, 'exxdiv', None)
-    s1.verbose = 10
-    if hasattr(scan_obj, 'xc'):
-        s1.xc = scan_obj.xc
-    
-    s1.kernel(dm0=dm0[0] if spin == 1 else dm0)
-    dm1 = scan_obj.make_rdm1()
-    ovlp0 = scan_obj.get_ovlp()
-    ovlp1 = s1.get_ovlp()
+    if hasattr(scf_obj, 'with_df'):
+        s1.with_df = scf_obj.with_df.reset(cell=c1)
 
-    print("get_ovlp0 = ", scan_obj.get_ovlp)
-    print("ovlp0 = ", ovlp0)
-    print("get_ovlp1 = ", s1.get_ovlp)
-    print("ovlp1 = ", ovlp1)
-    v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
-    v1 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
-    assert 1 == 2
+    if hasattr(scf_obj, 'xc'):
+        s1.xc = scf_obj.xc
     
-    c2 = scan_obj.cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-    mf2 = None
-    scan_obj(c2, dm0=dm0[0] if spin == 1 else dm0)
-    dm2 = scan_obj.make_rdm1()
-    print(dm2)
-    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
-    v2 += scan_obj.get_hcore() - scan_obj.cell.pbc_intor("int1e_kin", kpts=kpts)
+    s1.exxdiv = getattr(scf_obj, 'exxdiv', None)
+    s1.conv_tol = scf_obj.conv_tol
+    s1.conv_tol_grad = scf_obj.conv_tol_grad
+    s1.max_cycle = scf_obj.max_cycle
+    s1.verbose = scf_obj.verbose
+    s1.kernel(dm0=dm0[0] if spin == 1 else dm0)
+
+    dm1 = s1.make_rdm1()
+    v1 = s1.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
+    v1 += s1.get_hcore() - c1.pbc_intor('int1e_kin', kpts=kpts)
+
+    c2 = cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+    s2 = scf_obj.__class__(c2)
+    s2.kpts = kpts
+    if hasattr(scf_obj, 'with_df'):
+        s2.with_df = scf_obj.with_df.reset(cell=c2)
+
+    if hasattr(scf_obj, 'xc'):
+        s2.xc = scf_obj.xc
+    
+    s2.exxdiv = getattr(scf_obj, 'exxdiv', None)
+    s2.conv_tol = scf_obj.conv_tol
+    s2.conv_tol_grad = scf_obj.conv_tol_grad
+    s2.max_cycle = scf_obj.max_cycle
+    s2.verbose = scf_obj.verbose
+    s2.kernel(dm0=dm0[0] if spin == 1 else dm0)
+
+    dm2 = s2.make_rdm1()
+    v2 = s2.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
+    v2 += s2.get_hcore() - c2.pbc_intor('int1e_kin', kpts=kpts)
 
     assert v1.shape == v2.shape == (spin, nk, nao, nao)
-
-    assert 1 == 2
-    dv_ia_x = (v1 - v2) / (2 * stepsize)
-    dv_ia_x[:, :, p0:p1, :] -= v0[:, x, :, p0:p1, :]
-    dv_ia_x[:, :, :, p0:p1] -= v0[:, x, :, p0:p1, :].transpose(0, 1, 3, 2)
-    return dv_ia_x.reshape(spin, nao, nao)
+    dv = (v1 - v2) / (2 * stepsize)
+    dv[:, :, p0:p1, :] -= v0[:, x, :, p0:p1, :]
+    dv[:, :, :, p0:p1] -= v0[:, x, :, p0:p1, :].transpose(0, 1, 3, 2)
+    return dv
 
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         cell = self.cell
         nao = cell.nao_nr()
-        xyz = cell.atom_coords(unit="Bohr")
 
         if atmlst is None:
             atmlst = range(cell.natm)
 
         natm = len(atmlst)
         self.dump_flags()
-        
-        cell.verbose = 10
-        cell.build(dump_input=True)
 
         scf_obj = self.base.to_kscf()
+        grad_obj = scf_obj.nuc_grad_method()
+
         kpts = scf_obj.kpts
         if not isinstance(kpts, numpy.ndarray):
             kpts = kpts.kpts
@@ -112,14 +159,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if ni is not None and not isinstance(ni, KNumInt):
             scf_obj._numint = KNumInt(kpts)
 
-        # scan_obj = as_scanner(scf_obj)
-        scan_obj = scf_obj
-        grad_obj = scf_obj.nuc_grad_method()
-
         dm0 = scf_obj.make_rdm1()
         dm0 = dm0.reshape(-1, nk, nao, nao)
         spin = dm0.shape[0]
-        scf_obj.verbose = 10
         scf_obj.kernel(dm0=dm0[0] if spin == 1 else dm0)
         assert scf_obj.converged
 
@@ -132,55 +174,14 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         dv_ao = []
         for ix in range(3 * natm):
-            dv_ia_x = _fd(
-                scan_obj=scf_obj, xyz=xyz,
-                ix=ix, atmlst=atmlst, 
-                stepsize=stepsize,
-                v0=v0, dm0=dm0, kpts=kpts
-            )
-            dv_ao.append(dv_ia_x)
+            dv_ao_ia_x = _fd(
+                scf_obj=scf_obj, ix=ix, atmlst=atmlst, 
+                stepsize=stepsize, v0=v0, dm0=dm0
+                )
+            dv_ao.append(dv_ao_ia_x)
 
-        # for i0, ia in enumerate(atmlst):
-        #     s0, s1, p0, p1 = aoslices[ia]
-        #     for x in range(3):
-        #         dxyz = numpy.zeros_like(xyz)
-        #         dxyz[ia, x] = stepsize
-
-        #         m1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-        #         scan_obj(m1, dm0=dm0[0] if spin == 1 else dm0)
-        #         dm1 = scan_obj.make_rdm1()
-        #         v1  = scan_obj.get_hcore()
-        #         v1 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
-        #         v1  = v1.reshape(1, nk, nao, nao)
-        #         v1 += scan_obj.get_veff(dm_kpts=dm1).reshape(spin, nk, nao, nao)
-                
-
-        #         scan_obj(xyz - dxyz, dm0=dm0)
-        #         dm2 = scan_obj.make_rdm1()
-        #         v2  = scan_obj.get_hcore()
-        #         v2 -= numpy.asarray(scan_obj.cell.pbc_intor('int1e_kin', kpts=kpts))
-        #         v2  = v2.reshape(1, nk, nao, nao)
-        #         v2 += scan_obj.get_veff(dm_kpts=dm2).reshape(spin, nk, nao, nao)
-
-        #         assert v1.shape == v2.shape == (spin, nk, nao, nao)
-
-        #         dv_ia_x = (v1 - v2) / (2 * stepsize)
-
-        #         for s in range(spin):
-        #             print(dv_ia_x[s, :, p0:p1, :].shape, v0[s, x, :, p0:p1].shape   )
-        #             dv_ia_x[s, :, p0:p1, :] -= v0[s, x, :, p0:p1, :]
-        #             dv_ia_x[s, :, :, p0:p1] -= v0[s, x, :, p0:p1].transpose(0, 2, 1)
-
-        #         dv_ao.append(dv_ia_x)
-
-        dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nk, nao, nao)
-        print(dv_ao.shape)
-        assert 1 == 2
-        # nao = self.mol.nao_nr()
-        # dv_ao = numpy.array(dv_ao).reshape(len(atmlst), 3, spin, nk, nao, nao)
-        # self.dv_ao = self._finalize(dv_ao)
-
-        # return self.dv_ao
+        self.dv_ao = self._finalize(dv_ao)
+        return self.dv_ao
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
@@ -209,21 +210,21 @@ if __name__ == '__main__':
     # mf.with_df = df.GDF(cell)
     mf.xc = "PBE"
     mf.init_guess = 'atom' # atom guess is fast
-    mf.verbose = 10
+    mf.verbose = 0
     mf.kernel()
 
-    # eph_obj = ElectronPhononCoupling(mf)
-    # dv_sol  = eph_obj.kernel(stepsize=0.0)
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel(stepsize=1e-4)
 
-    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs
-    disp = 1e-2
+    # from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs
+    # disp = 1e-2
 
-    mf = mf.to_kscf()
-    cell = mf.cell
-    cells_a, cells_b = gen_cells(cell, disp/2.0) # generate a bunch of cells with disp/2 on each cartesian coord
-    mf.verbose = 10
-    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
-    # vmat = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
-    # hmat = run_hess(mfset, disp)
-    # omega, vec = solve_hmat(cell, hmat)
-    # mass = cell.atom_mass_list() * MP_ME
+    # mf = mf.to_kscf()
+    # cell = mf.cell
+    # cells_a, cells_b = gen_cells(cell, disp/2.0) # generate a bunch of cells with disp/2 on each cartesian coord
+    # mf.verbose = 10
+    # mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
+    # # vmat = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
+    # # hmat = run_hess(mfset, disp)
+    # # omega, vec = solve_hmat(cell, hmat)
+    # # mass = cell.atom_mass_list() * MP_ME

@@ -1,4 +1,4 @@
-import time, pyscf
+import os, sys, pyscf
 from pyscf import gto, scf, lib
 from eph.mol.eph_fd import ElectronPhononCoupling
 
@@ -38,8 +38,17 @@ def _fd_with_mpi(**kwargs):
 
     ix = kwargs['ix']
     if ix % size == rank:
+        f = f"fd-ix-{ix}.log"
+        f = os.path.join(lib.param.TMPDIR, f)
+    
+        scf_obj = kwargs['scf_obj']
+        scf_obj.verbose = 4
+        scf_obj.mol.stdout = open(f, "w")
+
         res = fd_without_mpi(**kwargs)
-        # print(f"ix = {ix:3d}, rank = {rank:3d}")
+        
+        scf_obj.mol.stdout.close()
+        scf_obj.mol.stdout = sys.stdout
         return (ix, res)
     else:
         return None
