@@ -55,7 +55,7 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         return dv_ao
 
 def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
-    ia, x = atmlst[ix // 3], ix % 3
+    ia, x = atmlst[ix % 3], ix // 3
 
     cell = scf_obj.cell
     scan_obj = scf_obj.as_scanner()
@@ -155,7 +155,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         dv_ao = []
         for ix in range(3 * natm):
             dv_ao_ia_x = _fd(
-                scf_obj=scf_obj, ix=ix, atmlst=atmlst, 
+                scf_obj=scf_obj, ix=ix, atmlst=atmlst,
                 stepsize=stepsize, v0=v0, dm0=dm0
                 )
             dv_ao.append(dv_ao_ia_x)
