@@ -55,7 +55,7 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         return dv_ao
 
 def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
-    ia, x = atmlst[ix % 3], ix // 3
+    ia, x = atmlst[ix // 3], ix % 3
 
     cell = scf_obj.cell
     scan_obj = scf_obj.as_scanner()
@@ -95,6 +95,9 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     c1.a = cell.lattice_vectors()
     c1.unit = "Bohr"
     c1.build()
+
+    print("\n ix = %d" % ix)
+    numpy.savetxt(c1.stdout, c1.atom_coords(), fmt="% 12.8f", delimiter=", ", header="geometry (bohr)")
 
     scan_obj(c1, dm0=dm0[0] if spin == 1 else dm0)
     dm1 = scan_obj.make_rdm1()
@@ -167,7 +170,7 @@ if __name__ == '__main__':
     from pyscf.pbc import gto, scf
     cell = gto.Cell()
     cell.a = numpy.diag([2, 2, 6])
-    cell.unit = "a"
+    cell.unit = "bohr"
     cell.atom = """
     He 1.000000 1.000000 2.000000
     He 1.000000 1.000000 4.000000
@@ -186,28 +189,34 @@ if __name__ == '__main__':
     mf.conv_tol_grad = 1e-12
     mf.kernel()
 
+    stepsize = 1e-4
     eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel(stepsize=1e-4)
+    dv_sol  = eph_obj.kernel(stepsize=stepsize / 2)
     dv_sol = dv_sol[:, 0]
 
     from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    disp = 1e-2
     mf = mf.to_kscf()
     from pyscf.pbc.dft.numint import KNumInt
     ni = getattr(mf, '_numint', None)
     if ni is not None and not isinstance(ni, KNumInt):
         mf._numint = KNumInt(mf.kpts)
 
-    cells_a, cells_b = gen_cells(cell, disp / 2.0)
+    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+    for ic, c in enumerate(cells_a):
+        c.verbose = 0
+        print("\nic = %d" % ic)
+        numpy.savetxt(c.stdout, c.atom_coords(), fmt="% 12.8f", delimiter=", ", header="geometry (bohr)")
     mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
-    dv_ref = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
+    dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
     dv_ref = dv_ref.reshape(dv_sol.shape)
 
     for n in range(dv_sol.shape[0]):
-        print("n = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
-        print(dv_sol[n])
-        print(dv_ref[n])
-        print()
+        err = abs(dv_sol[n] - dv_ref[n]).max()
+        if err > 1e-4:
+            print("n = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
+            print(dv_sol[n])
+            print(dv_ref[n])
+            print()
 
     err = abs(dv_sol - dv_ref).max()
     print("error = % 6.4e" % err)
