@@ -58,6 +58,8 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     ia, x = atmlst[ix // 3], ix % 3
 
     cell = scf_obj.cell
+    scan_obj = scf_obj.as_scanner()
+
     stdout = scf_obj.stdout
     s = cell.aoslice_by_atom()
     nao = s[-1][-1]
@@ -90,44 +92,24 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
         numpy.savetxt(stdout, xyz - dxyz, fmt="% 12.8f", delimiter=", ")
 
     c1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-    s1 = scf_obj.__class__(c1)
-    s1.kpts = kpts
-    # if hasattr(scf_obj, 'with_df'):
-    #     s1.with_df = scf_obj.with_df.__class__(c1)
+    c1.a = cell.lattice_vectors()
+    c1.unit = "Bohr"
+    c1.build()
 
-    if hasattr(scf_obj, 'xc'):
-        s1.xc = scf_obj.xc
-    
-    s1.exxdiv = getattr(scf_obj, 'exxdiv', None)
-    s1.conv_tol = scf_obj.conv_tol
-    s1.conv_tol_grad = scf_obj.conv_tol_grad
-    s1.max_cycle = scf_obj.max_cycle
-    s1.verbose = scf_obj.verbose
-    s1.kernel(dm0=dm0[0] if spin == 1 else dm0)
-
-    dm1 = s1.make_rdm1()
-    v1 = s1.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
-    v1 += s1.get_hcore() - c1.pbc_intor('int1e_kin', kpts=kpts)
+    scan_obj(c1, dm0=dm0[0] if spin == 1 else dm0)
+    dm1 = scan_obj.make_rdm1()
+    v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nk, nao, nao)
+    v1 += scan_obj.get_hcore() - c1.pbc_intor('int1e_kin', kpts=kpts)
 
     c2 = cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-    s2 = scf_obj.__class__(c2)
-    s2.kpts = kpts
-    # if hasattr(scf_obj, 'with_df'):
-    #     s2.with_df = scf_obj.with_df.__class__(c2)
+    c2.a = cell.lattice_vectors()
+    c2.unit = "Bohr"
+    c2.build()
 
-    if hasattr(scf_obj, 'xc'):
-        s2.xc = scf_obj.xc
-    
-    s2.exxdiv = getattr(scf_obj, 'exxdiv', None)
-    s2.conv_tol = scf_obj.conv_tol
-    s2.conv_tol_grad = scf_obj.conv_tol_grad
-    s2.max_cycle = scf_obj.max_cycle
-    s2.verbose = scf_obj.verbose
-    s2.kernel(dm0=dm0[0] if spin == 1 else dm0)
-
-    dm2 = s2.make_rdm1()
-    v2 = s2.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
-    v2 += s2.get_hcore() - c2.pbc_intor('int1e_kin', kpts=kpts)
+    scan_obj(c2, dm0=dm0[0] if spin == 1 else dm0)
+    dm2 = scan_obj.make_rdm1()
+    v2  = scan_obj.get_veff(dm=dm2).reshape(spin, nk, nao, nao)
+    v2 += scan_obj.get_hcore() - c2.pbc_intor('int1e_kin', kpts=kpts)
 
     assert v1.shape == v2.shape == (spin, nk, nao, nao)
     dv = (v1 - v2) / (2 * stepsize)
@@ -159,13 +141,13 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if ni is not None and not isinstance(ni, KNumInt):
             scf_obj._numint = KNumInt(kpts)
 
+        assert scf_obj.mo_occ.shape   == (2, nk, nao)
+        assert scf_obj.mo_coeff.shape == (2, nk, nao, nao)
         dm0 = scf_obj.make_rdm1()
         dm0 = dm0.reshape(-1, nk, nao, nao)
         spin = dm0.shape[0]
-        scf_obj.kernel(dm0=dm0[0] if spin == 1 else dm0)
         assert scf_obj.converged
 
-        dm0 = scf_obj.make_rdm1().reshape(spin, nk, nao, nao)
         v0 = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
         v0 = v0.reshape(spin, 3, nk, nao, nao)
         v0 += grad_obj.get_hcore().transpose(1, 0, 2, 3)
@@ -174,6 +156,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         dv_ao = []
         for ix in range(3 * natm):
+            print(ix)
             dv_ao_ia_x = _fd(
                 scf_obj=scf_obj, ix=ix, atmlst=atmlst, 
                 stepsize=stepsize, v0=v0, dm0=dm0
@@ -185,15 +168,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
-    from pyscf.pbc.tools import pyscf_ase
-
-    import ase
-    import ase.lattice
-    from ase.lattice.cubic import Diamond
-    diamond = Diamond(symbol='C', latticeconstant=3.5668)
-
     cell = gto.Cell()
     cell.a = numpy.diag([2, 2, 6])
+    cell.unit = "a"
     cell.atom = """
     He 1.000000 1.000000 2.000000
     He 1.000000 1.000000 4.000000
@@ -203,14 +180,13 @@ if __name__ == '__main__':
     cell.mesh = [10] * 3
     cell.build()
 
-    from pyscf.pbc import df
-    from pyscf.pbc import scf as pbcscf
-
-    mf = pbcscf.RKS(cell)
-    # mf.with_df = df.GDF(cell)
-    mf.xc = "PBE"
-    mf.init_guess = 'atom' # atom guess is fast
+    mf = scf.RKS(cell)
+    mf.xc = "PBE0"
+    mf.init_guess = 'atom'
     mf.verbose = 3
+    mf.max_cycle = 100
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-12
     mf.kernel()
 
     eph_obj = ElectronPhononCoupling(mf)
