@@ -141,8 +141,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         if ni is not None and not isinstance(ni, KNumInt):
             scf_obj._numint = KNumInt(kpts)
 
-        assert scf_obj.mo_occ.shape   == (2, nk, nao)
-        assert scf_obj.mo_coeff.shape == (2, nk, nao, nao)
         dm0 = scf_obj.make_rdm1()
         dm0 = dm0.reshape(-1, nk, nao, nao)
         spin = dm0.shape[0]
@@ -156,7 +154,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         dv_ao = []
         for ix in range(3 * natm):
-            print(ix)
             dv_ao_ia_x = _fd(
                 scf_obj=scf_obj, ix=ix, atmlst=atmlst, 
                 stepsize=stepsize, v0=v0, dm0=dm0
@@ -183,7 +180,7 @@ if __name__ == '__main__':
     mf = scf.RKS(cell)
     mf.xc = "PBE0"
     mf.init_guess = 'atom'
-    mf.verbose = 3
+    mf.verbose = 0
     mf.max_cycle = 100
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
@@ -191,16 +188,26 @@ if __name__ == '__main__':
 
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=1e-4)
+    dv_sol = dv_sol[:, 0]
 
-    # from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs
-    # disp = 1e-2
+    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
+    disp = 1e-2
+    mf = mf.to_kscf()
+    from pyscf.pbc.dft.numint import KNumInt
+    ni = getattr(mf, '_numint', None)
+    if ni is not None and not isinstance(ni, KNumInt):
+        mf._numint = KNumInt(mf.kpts)
 
-    # mf = mf.to_kscf()
-    # cell = mf.cell
-    # cells_a, cells_b = gen_cells(cell, disp/2.0) # generate a bunch of cells with disp/2 on each cartesian coord
-    # mf.verbose = 10
-    # mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
-    # # vmat = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
-    # # hmat = run_hess(mfset, disp)
-    # # omega, vec = solve_hmat(cell, hmat)
-    # # mass = cell.atom_mass_list() * MP_ME
+    cells_a, cells_b = gen_cells(cell, disp / 2.0)
+    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
+    dv_ref = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
+    dv_ref = dv_ref.reshape(dv_sol.shape)
+
+    for n in range(dv_sol.shape[0]):
+        print("n = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
+        print(dv_sol[n])
+        print(dv_ref[n])
+        print()
+
+    err = abs(dv_sol - dv_ref).max()
+    print("error = % 6.4e" % err)
