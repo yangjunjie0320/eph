@@ -192,7 +192,7 @@ if __name__ == '__main__':
     cell.mesh = [10] * 3
     cell.build()
 
-    mf = scf.RKS(cell)
+    mf = scf.UKS(cell)
     mf.xc = "PBE0"
     mf.init_guess = 'atom'
     mf.verbose = 0
