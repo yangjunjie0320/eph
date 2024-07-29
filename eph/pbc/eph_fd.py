@@ -204,7 +204,8 @@ if __name__ == '__main__':
     stepsize = 1e-5
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=stepsize / 2)
-    dv_sol = dv_sol[:, 0]
+    dv_sol = dv_sol[:, :, 0]
+    print("dv_sol.shape = ", dv_sol.shape)
 
     from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
     mf = mf.to_kscf()
@@ -220,6 +221,7 @@ if __name__ == '__main__':
         numpy.savetxt(c.stdout, c.atom_coords(), fmt="% 12.8f", delimiter=", ", header="geometry (bohr)")
     mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
     dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
+    print("dv_ref.shape = ", dv_ref.shape)
     dv_ref = dv_ref.reshape(dv_sol.shape)
 
     for n in range(dv_sol.shape[0]):
