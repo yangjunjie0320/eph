@@ -149,11 +149,22 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         spin = dm0.shape[0]
         assert scf_obj.converged
 
-        v0 = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
-        v0 = v0.reshape(spin, 3, nk, nao, nao)
-        v0 += grad_obj.get_hcore().transpose(1, 0, 2, 3)
-        v0 += numpy.asarray(grad_obj.cell.pbc_intor('int1e_ipkin', kpts=kpts, comp=3)).transpose(1, 0, 2, 3)
-        assert v0.shape == (spin, 3, nk, nao, nao)
+        # v0 = grad_obj.get_veff(dm=dm0[0] if spin == 1 else dm0)
+        # v0 = v0.reshape(spin, 3, nk, nao, nao)
+        # v0 += grad_obj.get_hcore().transpose(1, 0, 2, 3)
+        # v0 -= numpy.asarray(grad_obj.cell.pbc_intor('int1e_ipkin', kpts=kpts, comp=3)).transpose(1, 0, 2, 3)
+        # assert v0.shape == (spin, 3, nk, nao, nao)
+
+        veff = grad_obj.get_veff()
+        veff = veff.reshape(spin, 3, nk, nao, nao)
+        print("veff.shape = ", veff.shape)
+
+        v1e = grad_obj.get_hcore()
+        v1e -= numpy.asarray(cell.pbc_intor("int1e_ipkin", kpts=kpts))
+        v1e = v1e.transpose(1, 0, 2, 3)
+        print("v1e.shape = ", v1e.shape)
+        v0 = veff - v1e[None]
+        print("v0.shape = ", v0.shape)
 
         dv_ao = []
         for ix in range(3 * natm):
@@ -163,8 +174,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
                 )
             dv_ao.append(dv_ao_ia_x)
 
-        self.dv_ao = self._finalize(dv_ao)
-        return self.dv_ao
+        # self.dv_ao = self._finalize(dv_ao)
+        dv_ao = numpy.asarray(dv_ao)
+        return dv_ao
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
@@ -189,7 +201,7 @@ if __name__ == '__main__':
     mf.conv_tol_grad = 1e-12
     mf.kernel()
 
-    stepsize = 1e-4
+    stepsize = 1e-5
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=stepsize / 2)
     dv_sol = dv_sol[:, 0]
