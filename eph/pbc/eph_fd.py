@@ -173,7 +173,7 @@ if __name__ == '__main__':
     mf = scf.RKS(cell)
     # mf.with_df = multigrid.MultiGridFFTDF2(cell)
     # mf.with_df.ngrids = 4
-    mf.xc = "PBE"
+    mf.xc = "PBE0"
     mf.init_guess = 'atom'
     mf.verbose = 0
     mf.conv_tol = 1e-10
