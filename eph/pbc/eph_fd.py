@@ -39,18 +39,18 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
             dv_ao = dv_ao.reshape(-1, 3, spin, nk, nao, nao)
 
         natm, _, spin, nk, nao, _ = dv_ao.shape
-        assert dv_ao.shape == (natm, 3, spin, nk, nao, nao)
+        assert nk == 1, "nk = %d is not supported" % nk
+
+        dv_ao = dv_ao[:, :, :, 0]
+        dv_ao = dv_ao.transpose(2, 0, 1, 3, 4)
+        assert dv_ao.shape == (spin, natm, 3, nao, nao)
 
         if spin == 1:
-            dv_ao = dv_ao.reshape(-1, nk, nao, nao)
+            dv_ao = dv_ao.reshape(-1, nao, nao)
 
         elif spin == 2:
-            dv_ao = dv_ao.reshape(-1, 2, nk, nao, nao)
-            dv_ao = numpy.asarray((dv_ao[:, 0], dv_ao[:, 1]))
-            assert dv_ao.shape == (spin, natm * 3, nk, nao, nao)
-
-        else:
-            raise RuntimeError("spin = %d is not supported" % spin)
+            dv_ao = dv_ao.reshape(spin, -1, nao, nao)
+            assert dv_ao.shape == (spin, natm * 3, nao, nao)
 
         return dv_ao
 
@@ -164,29 +164,36 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
+    from pyscf.pbc.dft import multigrid
+
     cell = gto.Cell()
-    cell.atom='''
-    C 0.000000000000   0.000000000000   0.000000000000
-    C 1.685068664391   1.685068664391   1.685068664391
+    cell.atom = '''
+    C     0.      0.      0.    
+    C     0.8917  0.8917  0.8917
+    C     1.7834  1.7834  0.    
+    C     2.6751  2.6751  0.8917
+    C     1.7834  0.      1.7834
+    C     2.6751  0.8917  2.6751
+    C     0.      1.7834  1.7834
+    C     0.8917  2.6751  2.6751
     '''
     cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
-    cell.a = '''
-    0.000000000, 3.370137329, 3.370137329
-    3.370137329, 0.000000000, 3.370137329
-    3.370137329, 3.370137329, 0.000000000'''
-    cell.unit = 'B'
+    cell.a = numpy.eye(3) * 3.5668
+
+    cell.ke_cutoff = 200  # kinetic energy cutoff in a.u.
+    cell.precision = 1e-6 # integral precision
     cell.verbose = 0
-    cell.mesh = [10, 10, 10]
+    cell.use_loose_rcut = True # integral screening based on shell radii
+    cell.use_particle_mesh_ewald = True # use particle mesh ewald for nuclear repulsion
     cell.build()
 
-    mf = scf.UKS(cell)
+    mf = scf.RKS(cell)
+    mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    mf.with_df.ngrids = 4
     mf.xc = "PBE0"
     mf.init_guess = 'atom'
-    mf.verbose = 0
-    mf.max_cycle = 100
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-8
+    mf.verbose = 4
     mf.kernel()
 
     stepsize = 1e-4

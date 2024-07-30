@@ -1,36 +1,43 @@
-import os, sys, pyscf
-from pyscf import lib
-from pyscf.pbc import gto, scf
+import os, sys, numpy, scipy
 
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
+import pyscf
+from pyscf import lib
 from pyscf.pbc import gto, scf
+from pyscf.pbc.dft import multigrid
+
 cell = gto.Cell()
-cell.atom='''
-C 0.000000000000   0.000000000000   0.000000000000
-C 1.685068664391   1.685068664391   1.685068664391
+cell.atom = '''
+C     0.      0.      0.    
+C     0.8917  0.8917  0.8917
+C     1.7834  1.7834  0.    
+C     2.6751  2.6751  0.8917
+C     1.7834  0.      1.7834
+C     2.6751  0.8917  2.6751
+C     0.      1.7834  1.7834
+C     0.8917  2.6751  2.6751
 '''
 cell.basis = 'gth-szv'
 cell.pseudo = 'gth-pade'
-cell.a = '''
-0.000000000, 3.370137329, 3.370137329
-3.370137329, 0.000000000, 3.370137329
-3.370137329, 3.370137329, 0.000000000'''
-cell.unit = 'B'
+cell.a = numpy.eye(3) * 3.5668
+
+cell.ke_cutoff = 200  # kinetic energy cutoff in a.u.
+cell.precision = 1e-6 # integral precision
 cell.verbose = 0
-cell.mesh = [10, 10, 10]
+cell.use_loose_rcut = True # integral screening based on shell radii
+cell.use_particle_mesh_ewald = True # use particle mesh ewald for nuclear repulsion
 cell.build()
 
 mf = scf.RKS(cell)
+mf.with_df = multigrid.MultiGridFFTDF2(cell)
+mf.with_df.ngrids = 4
 mf.xc = "PBE0"
 mf.init_guess = 'atom'
-mf.verbose = 0
-mf.max_cycle = 100
-mf.conv_tol = 1e-10
-mf.conv_tol_grad = 1e-8
+mf.verbose = 4
 mf.kernel()
 
 import eph.pbc.eph_fd

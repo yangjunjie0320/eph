@@ -156,18 +156,15 @@ class ElectronPhononCouplingBase(lib.StreamObject):
             dv_ao = dv_ao.reshape(-1, 3, spin, nao, nao)
 
         natm, _, spin, nao, _ = dv_ao.shape
+        dv_ao = dv_ao.transpose(2, 0, 1, 3, 4)
         assert dv_ao.shape == (natm, 3, spin, nao, nao)
 
         if spin == 1:
             dv_ao = dv_ao.reshape(-1, nao, nao)
         
         elif spin == 2:
-            dv_ao = dv_ao.reshape(-1, 2, nao, nao)
-            dv_ao = numpy.asarray((dv_ao[:, 0], dv_ao[:, 1]))
+            dv_ao = dv_ao.reshape(2, -1, nao, nao)
             assert dv_ao.shape == (spin, natm * 3, nao, nao)
-
-        else:
-            raise RuntimeError("spin = %d is not supported" % spin)
 
         return dv_ao
 
