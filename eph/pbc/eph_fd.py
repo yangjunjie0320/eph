@@ -113,11 +113,12 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
             v0 = grad_obj.get_veff(dm=dm0)
             print(v0.shape)
-            v0  = v0.reshape(3, spin, nao, nao)
-            v0 -= grad_obj.get_hcore().reshape(3, -1, nao, nao)
+            v0  = v0.reshape(spin, 3, nao, nao)
+            v0 -= grad_obj.get_hcore().reshape(1, 3, nao, nao)
             v0 += cell.pbc_intor("int1e_ipkin").reshape(3, -1, nao, nao)
             v0  = v0.transpose(1, 0, 2, 3)
             assert v0.shape == (spin, 3, nao, nao)
+            assert 1 == 2
 
         elif isinstance(self.base.with_df, pyscf.pbc.df.FFTDF):
             scf_obj = self.base.to_kscf()
@@ -170,9 +171,9 @@ if __name__ == '__main__':
     cell.exp_to_discard = 0.1
     cell.build()
 
-    mf = scf.RKS(cell)
-    # mf.with_df = multigrid.MultiGridFFTDF2(cell)
-    # mf.with_df.ngrids = 4
+    mf = scf.UKS(cell)
+    mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    mf.with_df.ngrids = 5
     mf.xc = "PBE0"
     mf.init_guess = 'atom'
     mf.verbose = 0
@@ -186,7 +187,6 @@ if __name__ == '__main__':
     dv_sol  = eph_obj.kernel(stepsize=stepsize/2.0)
 
     from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    # mf.with_df = pyscf.pbc.df.FFTDF(cell)
     mf = mf.to_kscf()
     cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
     mf.verbose = 4
