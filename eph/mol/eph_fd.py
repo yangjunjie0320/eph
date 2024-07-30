@@ -154,10 +154,10 @@ class ElectronPhononCouplingBase(lib.StreamObject):
             nao = dv_ao[0].shape[-1]
             dv_ao = numpy.asarray(dv_ao)
             dv_ao = dv_ao.reshape(-1, 3, spin, nao, nao)
-
+            
         natm, _, spin, nao, _ = dv_ao.shape
         dv_ao = dv_ao.transpose(2, 0, 1, 3, 4)
-        assert dv_ao.shape == (natm, 3, spin, nao, nao)
+        assert dv_ao.shape == (spin, natm, 3, nao, nao)
 
         if spin == 1:
             dv_ao = dv_ao.reshape(-1, nao, nao)
