@@ -192,30 +192,4 @@ if __name__ == '__main__':
     stepsize = 1e-4
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=stepsize / 2)
-
-    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    mf = mf.to_kscf()
-    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
-    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
-    dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
-    spin = 2 if dv_ref.ndim == 4 else 1
-    
-    nao = cell.nao_nr()
-    if spin == 2:
-        dv_ref = dv_ref.transpose(1, 0, 2, 3)
-        dv_ref = dv_ref.reshape(-1, nao, nao)
-        dv_sol = dv_sol.reshape(-1, nao, nao)
-
-    import sys
-    for n in range(dv_sol.shape[0]):
-        err = abs(dv_sol[n] - dv_ref[n]).max()
-        if err > 1e-4:
-            print("n = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
-            print("dv_sol = ")
-            numpy.savetxt(sys.stdout, dv_sol[n], fmt="% 8.4f", delimiter=", ")
-
-            print("dv_ref = ")
-            numpy.savetxt(sys.stdout, dv_ref[n], fmt="% 8.4f", delimiter=", ")
-
-    err = abs(dv_sol - dv_ref).max()
-    print("error = % 6.4e" % err)
+    print(dv_sol.shape)
