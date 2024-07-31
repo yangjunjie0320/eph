@@ -10,6 +10,10 @@ from pyscf.lib import logger
 from pyscf.scf import hf, _vhf
 from pyscf import hessian
 
+from pyscf.pbc.scf.khf import KSCF
+from pyscf.pbc.df import FFTDF
+from pyscf.pbc.dft.multigrid import MultiGridFFTDF2
+
 import eph
 from eph.mol import eph_fd, uhf
 
@@ -100,8 +104,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         natm = len(atmlst)
         self.dump_flags()
 
-        assert not isinstance(self.base, pyscf.pbc.scf.khf.KSCF)
-        if isinstance(self.base.with_df, pyscf.pbc.dft.multigrid.MultiGridFFTDF2):
+        if isinstance(self.base.with_df, MultiGridFFTDF2) and (not isinstance(self.base, KSCF)):
             scf_obj = self.base
             grad_obj = scf_obj.nuc_grad_method()
             assert scf_obj.converged
@@ -120,7 +123,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             assert v0.shape == (spin, 3, nao, nao)
             assert 1 == 2
 
-        elif isinstance(self.base.with_df, pyscf.pbc.df.FFTDF):
+        else:
+            assert isinstance(self.base.with_df, FFTDF) or isinstance(self.base, MultiGridFFTDF2)
             scf_obj = self.base.to_kscf()
             grad_obj = scf_obj.nuc_grad_method()
             assert scf_obj.converged
@@ -135,9 +139,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             v0 = v0.transpose(1, 0, 2, 3)
             v0 = grad_obj.get_veff().reshape(3, spin, 1, nao, nao) - v0[:, None]
             v0 = v0.transpose(1, 0, 2, 3, 4).reshape(spin, 3, nao, nao)
-
-        else:
-            raise NotImplementedError
     
         dv_ao = []
         for ix in range(3 * natm):
@@ -155,14 +156,18 @@ if __name__ == '__main__':
     from pyscf.pbc import gto, scf
     from pyscf.pbc.dft import multigrid
 
+    l = l = 4.0
+    xyz  = "Li % 12.8f % 12.8f % 12.8f\n" % (0.5 * l, 0.5 * l, 0.5 * l - 0.1)
+    xyz += "Li % 12.8f % 12.8f % 12.8f"   % (0.5 * l, 0.5 * l, 0.5 * l + 0.1)
+    print(xyz)
+
+    assert 1 == 2
+
     cell = gto.Cell()
-    cell.atom = '''
-    Li 2.00000 2.000000 2.00000
-    Li 2.00000 2.000000 4.00000
-    '''
+    cell.atom = xyz
     cell.basis = 'gth-dzv'
     cell.pseudo = 'gth-pade'
-    cell.a = numpy.diag([4, 4, 6])
+    cell.a = numpy.diag([l] * 3)
     cell.ke_cutoff = 200
     cell.precision = 1e-6
     cell.verbose = 0
