@@ -104,64 +104,50 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         natm = len(atmlst)
         self.dump_flags()
 
-        if isinstance(self.base.with_df, MultiGridFFTDF2) and (not isinstance(self.base, KSCF)):
-            scf_obj = self.base
-            grad_obj = scf_obj.nuc_grad_method()
-            assert scf_obj.converged
+        assert not isinstance(self.base, KSCF)
+        if isinstance(self.base.with_df, MultiGridFFTDF2):
+            raise NotImplementedError
 
-            dm0 = scf_obj.make_rdm1()
-            dm0 = dm0.reshape(-1, nao, nao)
-            spin = dm0.shape[0]
-            dm0 = dm0[0] if spin == 1 else dm0
-
-            v0 = grad_obj.get_veff(dm=dm0)
-            print(v0.shape)
-            v0  = v0.reshape(spin, 3, nao, nao)
-            v0 -= grad_obj.get_hcore().reshape(1, 3, nao, nao)
-            v0 += cell.pbc_intor("int1e_ipkin").reshape(3, -1, nao, nao)
-            v0  = v0.transpose(1, 0, 2, 3)
-            assert v0.shape == (spin, 3, nao, nao)
-            assert 1 == 2
-
-        else:
-            assert isinstance(self.base.with_df, FFTDF) or isinstance(self.base, MultiGridFFTDF2)
+        elif isinstance(self.base.with_df, FFTDF):
             scf_obj = self.base.to_kscf()
             grad_obj = scf_obj.nuc_grad_method()
             assert scf_obj.converged
 
             dm0 = scf_obj.make_rdm1()
-            dm0 = dm0.reshape(-1, 1, nao, nao)
-            spin = dm0.shape[0]
-            dm0 = dm0[0] if spin == 1 else dm0
+            spin = dm0.size // nao // nao
 
-            v0 = grad_obj.get_hcore()
-            v0 -= numpy.asarray(cell.pbc_intor("int1e_ipkin", kpts=scf_obj.kpts))
-            v0 = v0.transpose(1, 0, 2, 3)
-            v0 = grad_obj.get_veff().reshape(3, spin, 1, nao, nao) - v0[:, None]
-            v0 = v0.transpose(1, 0, 2, 3, 4).reshape(spin, 3, nao, nao)
+            v0  = cell.pbc_intor("int1e_ipkin", kpts=scf_obj.kpts)
+            v0  = numpy.asarray(v0) - grad_obj.get_hcore() 
+            v0  = v0.reshape(3, 1, nao, nao)
+            v0 += grad_obj.get_veff(dm=dm0).reshape(3, spin, nao, nao)
+            v0  = v0.transpose(1, 0, 2, 3)
+            assert v0.shape == (spin, 3, nao, nao)
+
+            for x in range(3):
+                print("\nv0[%d]:" % x)
+                numpy.savetxt(self.stdout, v0[0, x], fmt="% 8.4f", delimiter=", ")
+
+        else:
+            raise NotImplementedError
     
-        dv_ao = []
-        for ix in range(3 * natm):
-            print(dm0.shape)
-            dv_ao_ia_x = _fd(
-                scf_obj=scf_obj, ix=ix, atmlst=atmlst, 
-                stepsize=stepsize, v0=v0, dm0=dm0
-                )
-            dv_ao.append(dv_ao_ia_x)
+        # dv_ao = []
+        # for ix in range(3 * natm):
+        #     dv_ao_ia_x = _fd(
+        #         scf_obj=scf_obj, ix=ix, atmlst=atmlst,
+        #         stepsize=stepsize, v0=v0, dm0=dm0
+        #         )
+        #     dv_ao.append(dv_ao_ia_x)
 
-        self.dv_ao = self._finalize(dv_ao)
-        return self.dv_ao
+        # self.dv_ao = self._finalize(dv_ao)
+        # return self.dv_ao
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
     from pyscf.pbc.dft import multigrid
 
-    l = l = 4.0
+    l = 4.0
     xyz  = "Li % 12.8f % 12.8f % 12.8f\n" % (0.5 * l, 0.5 * l, 0.5 * l - 0.1)
     xyz += "Li % 12.8f % 12.8f % 12.8f"   % (0.5 * l, 0.5 * l, 0.5 * l + 0.1)
-    print(xyz)
-
-    assert 1 == 2
 
     cell = gto.Cell()
     cell.atom = xyz
@@ -171,14 +157,12 @@ if __name__ == '__main__':
     cell.ke_cutoff = 200
     cell.precision = 1e-6
     cell.verbose = 0
-    cell.use_loose_rcut = True
-    cell.use_particle_mesh_ewald = True
+    # cell.use_loose_rcut = True
+    # cell.use_particle_mesh_ewald = True
     cell.exp_to_discard = 0.1
     cell.build()
 
-    mf = scf.UKS(cell)
-    mf.with_df = multigrid.MultiGridFFTDF2(cell)
-    mf.with_df.ngrids = 5
+    mf = scf.RKS(cell)
     mf.xc = "PBE0"
     mf.init_guess = 'atom'
     mf.verbose = 0
@@ -191,23 +175,38 @@ if __name__ == '__main__':
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=stepsize/2.0)
 
-    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    mf = mf.to_kscf()
-    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
-    mf.verbose = 4
-    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
+    mf = scf.RKS(cell)
+    mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    # mf.with_df.ngrids = 5
+    mf.xc = "PBE0"
+    mf.init_guess = 'atom'
+    mf.verbose = 0
+    mf.conv_tol = 1e-10
+    mf.conv_tol_grad = 1e-8
+    mf.max_cycle = 100
+    mf.kernel()
 
-    dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
-    dv_ref = dv_ref.reshape(dv_sol.shape)
+    stepsize = 1e-4
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel(stepsize=stepsize/2.0)
 
-    for n in range(dv_sol.shape[0]):
-        err = abs(dv_sol[n] - dv_ref[n]).max()
-        import sys
-        print("\nn = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
-        print("dv_sol:")
-        numpy.savetxt(sys.stdout, dv_sol[n], fmt="% 8.4f", delimiter=", ")
-        print("dv_ref:")
-        numpy.savetxt(sys.stdout, dv_ref[n], fmt="% 8.4f", delimiter=", ")
+    # from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
+    # mf = mf.to_kscf()
+    # cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+    # mf.verbose = 4
+    # mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
 
-    err = abs(dv_sol - dv_ref).max()
-    print("error = % 6.4e" % err)
+    # dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
+    # dv_ref = dv_ref.reshape(dv_sol.shape)
+
+    # for n in range(dv_sol.shape[0]):
+    #     err = abs(dv_sol[n] - dv_ref[n]).max()
+    #     import sys
+    #     print("\nn = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
+    #     print("dv_sol:")
+    #     numpy.savetxt(sys.stdout, dv_sol[n], fmt="% 8.4f", delimiter=", ")
+    #     print("dv_ref:")
+    #     numpy.savetxt(sys.stdout, dv_ref[n], fmt="% 8.4f", delimiter=", ")
+
+    # err = abs(dv_sol - dv_ref).max()
+    # print("error = % 6.4e" % err)
