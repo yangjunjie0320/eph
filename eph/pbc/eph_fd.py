@@ -173,40 +173,25 @@ if __name__ == '__main__':
 
     stepsize = 1e-4
     eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel(stepsize=stepsize/2.0)
+    dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0)
 
-    mf = scf.RKS(cell)
-    mf.with_df = multigrid.MultiGridFFTDF2(cell)
-    # mf.with_df.ngrids = 5
-    mf.xc = "PBE0"
-    mf.init_guess = 'atom'
-    mf.verbose = 0
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-8
-    mf.max_cycle = 100
-    mf.kernel()
+    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
+    mf = mf.to_kscf()
+    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+    mf.verbose = 4
+    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
 
-    stepsize = 1e-4
-    eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel(stepsize=stepsize/2.0)
+    dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
+    dv_ref = dv_ref.reshape(dv_sol.shape)
 
-    # from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    # mf = mf.to_kscf()
-    # cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
-    # mf.verbose = 4
-    # mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
+    for n in range(dv_sol.shape[0]):
+        err = abs(dv_sol[n] - dv_ref[n]).max()
+        import sys
+        print("\nn = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
+        print("dv_sol:")
+        numpy.savetxt(sys.stdout, dv_sol[n], fmt="% 8.4f", delimiter=", ")
+        print("dv_ref:")
+        numpy.savetxt(sys.stdout, dv_ref[n], fmt="% 8.4f", delimiter=", ")
 
-    # dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
-    # dv_ref = dv_ref.reshape(dv_sol.shape)
-
-    # for n in range(dv_sol.shape[0]):
-    #     err = abs(dv_sol[n] - dv_ref[n]).max()
-    #     import sys
-    #     print("\nn = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
-    #     print("dv_sol:")
-    #     numpy.savetxt(sys.stdout, dv_sol[n], fmt="% 8.4f", delimiter=", ")
-    #     print("dv_ref:")
-    #     numpy.savetxt(sys.stdout, dv_ref[n], fmt="% 8.4f", delimiter=", ")
-
-    # err = abs(dv_sol - dv_ref).max()
-    # print("error = % 6.4e" % err)
+    err = abs(dv_sol - dv_ref).max()
+    print("error = % 6.4e" % err)
