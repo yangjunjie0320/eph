@@ -84,7 +84,30 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     assert v1.shape == v2.shape == (spin, nao, nao)
     dv = (v1 - v2) / (2 * stepsize)
     dv[:, p0:p1, :] -= v0[:, x, p0:p1, :]
-    dv[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1)
+    dv[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1).conj()
+
+    from pyscf.lib import chkfile
+    path = os.path.join(lib.param.TMPDIR, "dv.h5")
+    ind = "%d/%d/" % (ia, x)
+    chkfile.dump(path, f"sol/{ind}dv", dv)
+    chkfile.dump(path, f"sol/{ind}v1", v1)
+    chkfile.dump(path, f"sol/{ind}v2", v2)
+    chkfile.dump(path, f"sol/{ind}v0", v0)
+    chkfile.dump(path, f"sol/{ind}p0", p0)
+    chkfile.dump(path, f"sol/{ind}p1", p1)
+    chkfile.dump(path, f"sol/{ind}x", x)
+    chkfile.dump(path, f"sol/{ind}ia", ia)
+    chkfile.dump(path, f"sol/{ind}stepsize", stepsize * 2)
+
+    # import sys
+    # print("v0[0, 0]")
+    # numpy.savetxt(sys.stdout, v0[0, 0], fmt="% 12.8f", delimiter=", ")
+    # print("v0[0, 1]")
+    # numpy.savetxt(sys.stdout, v0[0, 1], fmt="% 12.8f", delimiter=", ")
+    # print("v0[0, 2]")
+    # numpy.savetxt(sys.stdout, v0[0, 2], fmt="% 12.8f", delimiter=", ")
+    # assert 1 == 2
+
     return dv
 
 import pyscf.pbc.grad
@@ -117,29 +140,25 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             spin = dm0.size // nao // nao
 
             v0  = cell.pbc_intor("int1e_ipkin", kpts=scf_obj.kpts)
-            v0  = numpy.asarray(v0) - grad_obj.get_hcore() 
+            v0  = numpy.asarray(v0) - grad_obj.get_hcore()
             v0  = v0.reshape(3, 1, nao, nao)
             v0 += grad_obj.get_veff(dm=dm0).reshape(3, spin, nao, nao)
             v0  = v0.transpose(1, 0, 2, 3)
             assert v0.shape == (spin, 3, nao, nao)
 
-            for x in range(3):
-                print("\nv0[%d]:" % x)
-                numpy.savetxt(self.stdout, v0[0, x], fmt="% 8.4f", delimiter=", ")
-
         else:
             raise NotImplementedError
     
-        # dv_ao = []
-        # for ix in range(3 * natm):
-        #     dv_ao_ia_x = _fd(
-        #         scf_obj=scf_obj, ix=ix, atmlst=atmlst,
-        #         stepsize=stepsize, v0=v0, dm0=dm0
-        #         )
-        #     dv_ao.append(dv_ao_ia_x)
+        dv_ao = []
+        for ix in range(3 * natm):
+            dv_ao_ia_x = _fd(
+                scf_obj=scf_obj, ix=ix, atmlst=atmlst,
+                stepsize=stepsize, v0=v0, dm0=dm0
+                )
+            dv_ao.append(dv_ao_ia_x)
 
-        # self.dv_ao = self._finalize(dv_ao)
-        # return self.dv_ao
+        self.dv_ao = self._finalize(dv_ao)
+        return self.dv_ao
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
@@ -162,36 +181,27 @@ if __name__ == '__main__':
     cell.exp_to_discard = 0.1
     cell.build()
 
+    stepsize = 1e-4
+
     mf = scf.RKS(cell)
     mf.xc = "PBE0"
     mf.init_guess = 'atom'
     mf.verbose = 0
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-8
+    mf.conv_tol = 1e-12
+    mf.conv_tol_grad = 1e-10
     mf.max_cycle = 100
     mf.kernel()
 
-    stepsize = 1e-4
+    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
+    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+
+    mkf = mf.to_kscf()
+    mfset = run_mfs(mkf, cells_a, cells_b)
+    dv_ref = get_vmat(mkf, mfset, stepsize) # extracting <u|dV|v>/dR
+
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0)
-
-    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    mf = mf.to_kscf()
-    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
-    mf.verbose = 4
-    mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
-
-    dv_ref = get_vmat(mf, mfset, stepsize) # extracting <u|dV|v>/dR
     dv_ref = dv_ref.reshape(dv_sol.shape)
 
-    for n in range(dv_sol.shape[0]):
-        err = abs(dv_sol[n] - dv_ref[n]).max()
-        import sys
-        print("\nn = %d, error = % 6.4e" % (n, abs(dv_sol[n] - dv_ref[n]).max()))
-        print("dv_sol:")
-        numpy.savetxt(sys.stdout, dv_sol[n], fmt="% 8.4f", delimiter=", ")
-        print("dv_ref:")
-        numpy.savetxt(sys.stdout, dv_ref[n], fmt="% 8.4f", delimiter=", ")
-
     err = abs(dv_sol - dv_ref).max()
-    print("error = % 6.4e" % err)
+    print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
