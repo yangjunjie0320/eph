@@ -85,29 +85,6 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     dv = (v1 - v2) / (2 * stepsize)
     dv[:, p0:p1, :] -= v0[:, x, p0:p1, :]
     dv[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1).conj()
-
-    from pyscf.lib import chkfile
-    path = os.path.join(lib.param.TMPDIR, "dv.h5")
-    ind = "%d/%d/" % (ia, x)
-    chkfile.dump(path, f"sol/{ind}dv", dv)
-    chkfile.dump(path, f"sol/{ind}v1", v1)
-    chkfile.dump(path, f"sol/{ind}v2", v2)
-    chkfile.dump(path, f"sol/{ind}v0", v0)
-    chkfile.dump(path, f"sol/{ind}p0", p0)
-    chkfile.dump(path, f"sol/{ind}p1", p1)
-    chkfile.dump(path, f"sol/{ind}x", x)
-    chkfile.dump(path, f"sol/{ind}ia", ia)
-    chkfile.dump(path, f"sol/{ind}stepsize", stepsize * 2)
-
-    # import sys
-    # print("v0[0, 0]")
-    # numpy.savetxt(sys.stdout, v0[0, 0], fmt="% 12.8f", delimiter=", ")
-    # print("v0[0, 1]")
-    # numpy.savetxt(sys.stdout, v0[0, 1], fmt="% 12.8f", delimiter=", ")
-    # print("v0[0, 2]")
-    # numpy.savetxt(sys.stdout, v0[0, 2], fmt="% 12.8f", delimiter=", ")
-    # assert 1 == 2
-
     return dv
 
 import pyscf.pbc.grad
