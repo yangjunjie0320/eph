@@ -104,27 +104,25 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         natm = len(atmlst)
         self.dump_flags()
 
+        scf_obj = self.base.to_kscf()
+        grad_obj = scf_obj.nuc_grad_method()
+        kpts = scf_obj.kpts
+
+        from pyscf.pbc.lib.kpts_helper import gamma_point
         assert not isinstance(self.base, KSCF)
-        if isinstance(self.base.with_df, MultiGridFFTDF2):
-            raise NotImplementedError
+        assert gamma_point(kpts)
+        assert scf_obj.converged
 
-        elif isinstance(self.base.with_df, FFTDF):
-            scf_obj = self.base.to_kscf()
-            grad_obj = scf_obj.nuc_grad_method()
-            assert scf_obj.converged
+        dm0 = scf_obj.make_rdm1()
+        spin = dm0.size // nao // nao
 
-            dm0 = scf_obj.make_rdm1()
-            spin = dm0.size // nao // nao
-
-            v0  = cell.pbc_intor("int1e_ipkin", kpts=scf_obj.kpts)
-            v0  = numpy.asarray(v0) - grad_obj.get_hcore()
-            v0  = v0.reshape(3, 1, nao, nao)
-            v0 += grad_obj.get_veff(dm=dm0).reshape(3, spin, nao, nao)
-            v0  = v0.transpose(1, 0, 2, 3)
-            assert v0.shape == (spin, 3, nao, nao)
-
-        else:
-            raise NotImplementedError
+        from pyscf.pbc.grad.krhf import get_hcore as grad_get_hcore
+        v0  = cell.pbc_intor("int1e_ipkin", kpts=kpts)
+        v0  = numpy.asarray(v0) - grad_get_hcore(cell, kpts)[0]
+        v0  = v0.reshape(3, 1, nao, nao)
+        v0 += grad_obj.get_veff(dm=dm0).reshape(3, spin, nao, nao)
+        v0  = v0.transpose(1, 0, 2, 3)
+        assert v0.shape == (spin, 3, nao, nao)
     
         dv_ao = []
         for ix in range(3 * natm):
@@ -141,44 +139,62 @@ if __name__ == '__main__':
     from pyscf.pbc import gto, scf
     from pyscf.pbc.dft import multigrid
 
-    l = 4.0
-    xyz  = "Li % 12.8f % 12.8f % 12.8f\n" % (0.5 * l, 0.5 * l, 0.5 * l - 0.1)
-    xyz += "Li % 12.8f % 12.8f % 12.8f"   % (0.5 * l, 0.5 * l, 0.5 * l + 0.1)
-
     cell = gto.Cell()
-    cell.atom = xyz
-    cell.basis = 'gth-dzv'
+    cell.atom='''
+    C 0.000000000000   0.000000000000   0.000000000000
+    C 1.685068664391   1.685068664391   1.685068664391
+    '''
+    cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
-    cell.a = numpy.diag([l] * 3)
+    cell.a = '''
+    0.000000000, 3.370137329, 3.370137329
+    3.370137329, 0.000000000, 3.370137329
+    3.370137329, 3.370137329, 0.000000000'''
+    cell.unit = 'B'
+    cell.verbose = 4
     cell.ke_cutoff = 200
-    cell.precision = 1e-6
-    cell.verbose = 0
-    # cell.use_loose_rcut = True
-    # cell.use_particle_mesh_ewald = True
-    cell.exp_to_discard = 0.1
     cell.build()
 
     stepsize = 1e-4
-
     mf = scf.RKS(cell)
-    mf.xc = "PBE0"
+    mf.xc = "PBE"
     mf.init_guess = 'atom'
     mf.verbose = 0
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-10
+    mf.conv_tol = 1e-10
+    mf.conv_tol_grad = 1e-8
     mf.max_cycle = 100
     mf.kernel()
-
-    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
-
-    mkf = mf.to_kscf()
-    mfset = run_mfs(mkf, cells_a, cells_b)
-    dv_ref = get_vmat(mkf, mfset, stepsize) # extracting <u|dV|v>/dR
+    dm0 = mf.make_rdm1()
 
     eph_obj = ElectronPhononCoupling(mf)
-    dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0)
-    dv_ref = dv_ref.reshape(dv_sol.shape)
+    dv_1 = eph_obj.kernel(stepsize=stepsize)
 
-    err = abs(dv_sol - dv_ref).max()
+    mf = scf.RKS(cell)
+    mf.xc = "PBE"
+    mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    mf.init_guess = 'atom'
+    mf.verbose = 0
+    mf.conv_tol = 1e-10
+    mf.conv_tol_grad = 1e-8
+    mf.max_cycle = 100
+    mf.kernel(dm0=dm0)
+
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_2 = eph_obj.kernel(stepsize=stepsize)
+
+    err = abs(dv_1 - dv_2).max()
     print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
+
+
+    # from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
+    # cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+    # mfk = mf.to_kscf()
+    # mfset = run_mfs(mfk, cells_a[:3], cells_b[:3])
+    # dv_ref = get_vmat(mfk, mfset, stepsize) 
+
+    # eph_obj = ElectronPhononCoupling(mf)
+    # dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0, atmlst=[0])
+    # dv_ref = dv_ref.reshape(dv_sol.shape)
+
+    # err = abs(dv_sol - dv_ref).max()
+    # print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
