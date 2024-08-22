@@ -89,7 +89,8 @@ def _rhf_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
         is_hybrid = ni.libxc.is_hybrid_xc(mf_obj.xc)
 
     else: # is Hartree-Fock
-        assert isinstance(mf_obj, scf.hf.RHF)
+        from pyscf.scf import hf
+        assert isinstance(mf_obj, hf.RHF)
         omega, alpha, hyb = 0.0, 0.0, 1.0
         is_hybrid = True
         vxc1 = None
@@ -221,22 +222,27 @@ def _rhf_mo1(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
         h1 = h1.reshape(size * 3, nmo, nocc)
         s1 = s1.reshape(size * 3, nmo, nocc)
 
-        m1, e1 = cphf.solve(
+        z1, e1 = cphf.solve(
             func, mo_energy, mo_occ, h1, s1,
             tol=conv_tol * size,
             max_cycle=max_cycle,
             level_shift=level_shift
         )
 
-        m1 = numpy.einsum('mq,xqi->xmi', mo_coeff, m1).reshape(size, 3, nao, nocc)
+        t1 = numpy.einsum('mq,xqi->xmi', mo_coeff, z1).reshape(-1, nao, nocc)
+        dm1 = 2.0 * numpy.einsum('xmi,ni->xmn', t1, orbo)
+        dm1 = dm1 + dm1.transpose(0, 2, 1)
         e1 = e1.reshape(size, 3, nocc, nocc)
 
         for ia in atmlst[ia0:ia1]:
             key = 'scf_mo1/%d' % ia
-            lib.chkfile.save(chkfile, key, m1[ia])
+            lib.chkfile.save(chkfile, key, t1[ia])
 
             key = 'scf_e1/%d' % ia
             lib.chkfile.save(chkfile, key, e1[ia])
+
+            key = 'scf_dm1/%d' % ia
+            lib.chkfile.save(chkfile, key, dm1[ia])
 
 if __name__ == '__main__':
     from pyscf import gto, scf

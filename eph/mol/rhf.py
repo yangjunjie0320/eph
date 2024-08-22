@@ -28,12 +28,11 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     nao, nmo = mo_coeff.shape[-2:]
 
     chkfile = chkfile if chkfile is not None else eph_obj.chkfile
-    if not os.path.exists(chkfile):
-        eph_obj.solve_mo1(
-            mo_energy=mo_energy, mo_coeff=mo_coeff, 
-            mo_occ=mo_occ, chkfile=chkfile,
-            atmlst=atmlst, verbose=log
-            )
+    eph_obj.solve_mo1(
+        mo_energy=mo_energy, mo_coeff=mo_coeff, 
+        mo_occ=mo_occ, chkfile=chkfile,
+        atmlst=atmlst, verbose=log
+        )
     assert os.path.exists(chkfile), '%s not found' % chkfile
 
     from pyscf import dft
@@ -60,23 +59,20 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
 
     vnuc_deriv = eph_obj.gen_vnuc_deriv(mol_obj)
     vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
+    orbo = mo_coeff[:, mo_occ > 0]
+    nocc = orbo.shape[1]
     
     dv_ao = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
-        t1 = lib.chkfile.load(chkfile, 'scf_mo1/%d' % ia)
-        t1 = t1.reshape(-1, nao, nmo)
+        dm1 = lib.chkfile.load(chkfile, 'scf_dm1/%d' % ia)
 
         vjk1 = lib.chkfile.load(chkfile, 'scf_j1ao/%d' % ia)
         if is_hybrid:
             vk1 = lib.chkfile.load(chkfile, 'scf_k1ao/%d' % ia)
-            vjk1 -= 0.5 * vk1 * hyb
+            vjk1 -= 0.5 * hyb * vk1
 
         v1 = vjk1 + vjk1.transpose(0, 2, 1)
-        dm1 = numpy.dot(t1, mo_coeff.T)
-        dm1 = numpy.dot(dm1, dm1.T) * 2.0
-
-        v1 = v1 + vnuc_deriv(ia)
-        v1 = v1 + vresp(dm1)
+        v1 = v1 + vresp(dm1) + vnuc_deriv(ia)
         dv_ao.append(v1)
 
     dv_ao = numpy.array(dv_ao).reshape(len(atmlst), -1, 3, nao, nao)
@@ -147,7 +143,7 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         dv_ao = kernel(
             self, mo_energy=mo_energy,
             mo_coeff=mo_coeff, mo_occ=mo_occ,
-            atmlst=atmlst, h1ao=None, mo1=None,
+            atmlst=atmlst, chkfile=self.chkfile,
         )
 
         self.dv_ao = self._finalize(dv_ao)
@@ -159,20 +155,20 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
 
-    def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                             scf_obj=None, mo1=None, h1ao=None, verbose=None):
-        if scf_obj is None: scf_obj = self.base
+    # def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+    #                          scf_obj=None, mo1=None, h1ao=None, verbose=None):
+    #     if scf_obj is None: scf_obj = self.base
         
-        # use the function within eph.mol.rks,
-        # treat as a hybrid functional with hyb = 1.0
-        from eph.mol.rks import gen_veff_deriv
-        res = gen_veff_deriv(
-            self, mo_occ=mo_occ, mo_coeff=mo_coeff, 
-            scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, 
-            verbose=verbose
-            )
+    #     # use the function within eph.mol.rks,
+    #     # treat as a hybrid functional with hyb = 1.0
+    #     from eph.mol.rks import gen_veff_deriv
+    #     res = gen_veff_deriv(
+    #         self, mo_occ=mo_occ, mo_coeff=mo_coeff, 
+    #         scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, 
+    #         verbose=verbose
+    #         )
         
-        return res
+    #     return res
     
 if __name__ == '__main__':
     from pyscf import gto, scf
