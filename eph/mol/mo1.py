@@ -247,7 +247,7 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = 'sto3g'
+    mol.basis = '631g*'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
