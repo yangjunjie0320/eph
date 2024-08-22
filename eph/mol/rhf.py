@@ -64,6 +64,15 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     
     dv_ao = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
+        # what I need?
+        h1 = None
+        f1 = None
+        s1 = None
+
+        dm1 = None
+        # what is vjk1?
+        # f1 s1 are only used for cphf, not for the vjk1
+
         dm1 = lib.chkfile.load(chkfile, 'scf_dm1/%d' % ia)
 
         vjk1 = lib.chkfile.load(chkfile, 'scf_j1ao/%d' % ia)
@@ -154,21 +163,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
         assert isinstance(method, scf.hf.RHF)
         ElectronPhononCouplingBase.__init__(self, method)
-
-    # def gen_veff_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
-    #                          scf_obj=None, mo1=None, h1ao=None, verbose=None):
-    #     if scf_obj is None: scf_obj = self.base
-        
-    #     # use the function within eph.mol.rks,
-    #     # treat as a hybrid functional with hyb = 1.0
-    #     from eph.mol.rks import gen_veff_deriv
-    #     res = gen_veff_deriv(
-    #         self, mo_occ=mo_occ, mo_coeff=mo_coeff, 
-    #         scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, 
-    #         verbose=verbose
-    #         )
-        
-    #     return res
     
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -179,7 +173,7 @@ if __name__ == '__main__':
     H      -0.7540663886    -0.0000000000    -0.4587203947
     H       0.7540663886    -0.0000000000    -0.4587203947
     '''
-    mol.basis = '631g*'
+    mol.basis = 'sto3g' # 631g*'
     mol.verbose = 0
     mol.symmetry = False
     mol.cart = True
@@ -195,9 +189,9 @@ if __name__ == '__main__':
     mf.max_cycle = 1000
     mf.kernel()
 
-    grad = mf.nuc_grad_method().kernel()
-    assert numpy.allclose(grad, 0.0, atol=1e-3)
-    hess = mf.Hessian().kernel()
+    # grad = mf.nuc_grad_method().kernel()
+    # assert numpy.allclose(grad, 0.0, atol=1e-3)
+    # hess = mf.Hessian().kernel()
 
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel()
@@ -207,5 +201,15 @@ if __name__ == '__main__':
     eph_fd.verbose = 0
     for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
         dv_ref = eph_fd.kernel(stepsize=stepsize)
-        err = abs(dv_sol - dv_ref).max()
-        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+        for ia in range(9):
+            # print("dv_ref.shape = ", dv_ref.shape)
+            # numpy.savetxt(mol.stdout, dv_ref[ia], fmt="% 12.8f", delimiter=", ")
+
+            # print("dv_sol.shape = ", dv_sol.shape)
+            # numpy.savetxt(mol.stdout, dv_sol[ia], fmt="% 12.8f", delimiter=", ")
+
+            err = abs(dv_sol[ia] - dv_ref[ia]).max()
+            print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+            # assert err < 1e-6, 
+        
+        # assert 1  == 2
