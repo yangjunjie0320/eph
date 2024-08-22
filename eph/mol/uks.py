@@ -118,7 +118,7 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
 
     return vmata, vmatb
 
-def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
+def gen_veff_deriv(eph_obj=None, mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
     log = logger.new_logger(None, verbose)
 
     mol = scf_obj.mol
@@ -183,7 +183,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         assert t1b is not None
         t1 = (t1a, t1b)
 
-        from pyscf.hessian.rhf import _get_jk
+        get_jk1 = eph_obj.gen_jk()
         s0, s1, p0, p1 = aoslices[ia]
         shls_slice  = (s0, s1) + (0, nbas) * 3
         script_dms  = ['ji->s2kl', -dm0a[:,p0:p1]] # vj1a
@@ -192,8 +192,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         script_dms += ['li->s1kj', -dm0b[:,p0:p1]] # vk1b
 
         if is_hybrid:
-            tmp = _get_jk(
-                mol, 'int2e_ip1', 3, 's2kl',
+            tmp = get_jk1(
                 script_dms=script_dms,
                 shls_slice=shls_slice
             )
@@ -214,8 +213,7 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
                 vjk1b -= (alpha - hyb) * vk1b
 
         else: # is pure functional
-            vj1a, vj1b = _get_jk(
-                mol, 'int2e_ip1', 3, 's2kl',
+            vj1a, vj1b = get_jk1(
                 script_dms=script_dms[:4],
                 shls_slice=shls_slice
             )

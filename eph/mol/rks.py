@@ -90,14 +90,17 @@ def _get_vxc_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, max_memory=2000, ve
     t1 = log.timer_debug1('vxc', *t0)
     return -(vmat + vmat.transpose(0, 1, 3, 2))
 
-def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
+def gen_veff_deriv(eph_obj=None, mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None, verbose=None):
     log = logger.new_logger(None, verbose)
 
     mol = scf_obj.mol
+    nbas = mol.nbas
     aoslices = mol.aoslice_by_atom()
     nao, nmo = mo_coeff.shape
-    nbas = scf_obj.mol.nbas
-
+    
+    chkfile = eph_obj.chkfile
+    assert os.path.exists(chkfile), '%s not found' % chkfile
+    
     orbo = mo_coeff[:, mo_occ > 0]
     nocc = orbo.shape[1]
     dm0 = numpy.dot(orbo, orbo.T) * 2.0
@@ -128,56 +131,21 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         is_hybrid = True
         vxc1 = None
 
+    assert omega == 0.0
     vresp = scf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
 
     def load(ia):
-        assert h1ao is not None
-        assert mo1 is not None
-
-        t1 = None
-        if isinstance(mo1, str):
-            assert os.path.exists(mo1), '%s not found' % mo1
-            t1 = lib.chkfile.load(mo1, 'scf_mo1/%d' % ia)
-            t1 = t1.reshape(-1, nao, nocc)
-
-        else:
-            t1 = mo1[ia].reshape(-1, nao, nocc)
-
-        assert t1 is not None
-
-        from pyscf.hessian.rhf import _get_jk
-        s0, s1, p0, p1 = aoslices[ia]
-        shls_slice  = (s0, s1) + (0, nbas) * 3
-        script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
-        script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
+        
+        t1 = lib.chkfile.load(chkfile, 'scf_mo1/%d' % ia)
+        t1 = t1.reshape(-1, nao, nocc)
         
         if is_hybrid:
-            
-            tmp = _get_jk(
-                mol, 'int2e_ip1', 3, 's2kl',
-                script_dms=script_dms,
-                shls_slice=shls_slice
-            )
-
-            vj1, vk1 = tmp
+            vj1 = lib.chkfile.load(h1ao, 'scf_vj1ao/%d' % ia)
+            vk1 = lib.chkfile.load(h1ao, 'scf_vk1ao/%d' % ia)
             vjk1 = vj1 - vk1 * 0.5 * hyb
 
-            if omega != 0.0:
-                with mol.with_range_coulomb(omega):
-                    vk1 = _get_jk(
-                        mol, 'int2e_ip1', 3, 's2kl',
-                        script_dms=script_dms[2:],
-                        shls_slice=shls_slice
-                    )
-                vjk1 -= (alpha - hyb) * 0.5 * vk1
-
         else: # is pure functional
-            vj1 = _get_jk(
-                mol, 'int2e_ip1', 3, 's2kl',
-                script_dms=script_dms[:2],
-                shls_slice=shls_slice
-            )
-
+            vj1 = lib.chkfile.load(h1ao, 'scf_vj1ao/%d' % ia)
             vjk1 = vj1
 
         return t1, vjk1
@@ -196,6 +164,10 @@ def gen_veff_deriv(mo_occ=None, mo_coeff=None, scf_obj=None, mo1=None, h1ao=None
         return v1
 
     return func
+
+def get_h1ao(eph_obj, atmlst=None):
+    chkfile = eph_obj.chkfile
+    assert os.path.exists(chkfile), '%s not found' % chkfile
 
 class ElectronPhononCoupling(eph.mol.rhf.ElectronPhononCoupling):
     def __init__(self, method):

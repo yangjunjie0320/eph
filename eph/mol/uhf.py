@@ -26,8 +26,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         from eph.mol.uks import gen_veff_deriv
         res = gen_veff_deriv(
-            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
-            mo1=mo1, h1ao=h1ao, verbose=verbose
+            self, mo_occ=mo_occ, mo_coeff=mo_coeff, 
+            scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, 
+            verbose=verbose
             )
         
         return res

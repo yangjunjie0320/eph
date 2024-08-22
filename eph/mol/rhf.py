@@ -74,6 +74,9 @@ def gen_vnuc_deriv(mol):
 # The base for the analytic EPC calculation
 class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
     level_shift = 0.0
+    conv_tol_cphf = 1e-8
+    max_cycle_cphf = 50
+
     max_cycle = 50
     max_memory = 4000
 
@@ -85,31 +88,32 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
                              scf_obj=None, mo1=None, h1ao=None, verbose=None):
         raise NotImplementedError
 
-    def make_h1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                      chkfile=None, atmlst=None, verbose=None):
+    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
+                        chkfile=None, atmlst=None, verbose=logger.DEBUG):
         if mo_energy is None: mo_energy = self.base.mo_energy
         if mo_coeff is None:  mo_coeff = self.base.mo_coeff
         if mo_occ is None:    mo_occ = self.base.mo_occ
 
-        res = self.base.Hessian().make_h1(
+        if chkfile is None:
+            chkfile = self.chkfile
+
+        from mo1 import get_h1ao, solve_mo1
+        get_h1ao(
+            self.base, mo_energy=mo_energy, 
             mo_coeff=mo_coeff, mo_occ=mo_occ,
             chkfile=chkfile, atmlst=atmlst, 
             verbose=verbose
         )
-        return res
-    
-    def solve_mo1(self, mo_energy=None, mo_coeff=None, mo_occ=None, 
-                        h1ao_or_chkfile=None, atmlst=None, verbose=None):
-        if mo_energy is None: mo_energy = self.base.mo_energy
-        if mo_coeff is None:  mo_coeff = self.base.mo_coeff
-        if mo_occ is None:    mo_occ = self.base.mo_occ
 
-        res = self.base.Hessian().solve_mo1(
-            mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ,
-            h1ao_or_chkfile=h1ao_or_chkfile, atmlst=atmlst,
-            verbose=verbose, max_memory=self.max_memory,
+        assert os.path.exists(chkfile), '%s not found' % chkfile
+        solve_mo1(
+            self.base, mo_energy=mo_energy, 
+            mo_coeff=mo_coeff, mo_occ=mo_occ,
+            chkfile=chkfile, conv_tol=self.conv_tol_cphf,
+            atmlst=atmlst, max_cycle=self.max_cycle_cphf,
+            verbose=verbose
         )
-        return res
+        return chkfile
 
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
         if mo_energy is None: mo_energy = self.base.mo_energy
@@ -140,8 +144,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         # treat as a hybrid functional with hyb = 1.0
         from eph.mol.rks import gen_veff_deriv
         res = gen_veff_deriv(
-            mo_occ=mo_occ, mo_coeff=mo_coeff, scf_obj=scf_obj,
-            mo1=mo1, h1ao=h1ao, verbose=verbose
+            self, mo_occ=mo_occ, mo_coeff=mo_coeff, 
+            scf_obj=scf_obj, mo1=mo1, h1ao=h1ao, 
+            verbose=verbose
             )
         
         return res
