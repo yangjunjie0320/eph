@@ -8,6 +8,83 @@ from pyscf.scf import cphf
 
 from jk import get_jk1, gen_hcore_deriv, get_ipovlp
 
+def _get_vxc_deriv1(hessobj, mo_coeff, mo_occ, max_memory):
+    from pyscf.grad import rks as rks_grad
+    from pyscf.dft import numint, gen_grid
+    from pyscf.hessian.rks import _make_dR_rho1
+
+    mol = hessobj.mol
+    mf = hessobj.base
+    if hessobj.grids is not None:
+        grids = hessobj.grids
+    else:
+        grids = mf.grids
+    if grids.coords is None:
+        grids.build(with_non0tab=True)
+
+    nao, nmo = mo_coeff.shape
+    ni = mf._numint
+    xctype = ni._xc_type(mf.xc)
+    aoslices = mol.aoslice_by_atom()
+    shls_slice = (0, mol.nbas)
+    ao_loc = mol.ao_loc_nr()
+    dm0 = mf.make_rdm1(mo_coeff, mo_occ)
+
+    v_ip = numpy.zeros((3,nao,nao))
+    vmat = numpy.zeros((mol.natm,3,nao,nao))
+    max_memory = max(2000, max_memory-vmat.size*8/1e6)
+    if xctype == 'LDA':
+        ao_deriv = 1
+        for ao, mask, weight, coords \
+                in ni.block_loop(mol, grids, nao, ao_deriv, max_memory):
+            rho = ni.eval_rho2(mol, ao[0], mo_coeff, mo_occ, mask, xctype)
+            vxc, fxc = ni.eval_xc_eff(mf.xc, rho, 2, xctype=xctype)[1:3]
+            wv = weight * vxc[0]
+            aow = numint._scale_ao(ao[0], wv)
+            rks_grad._d1_dot_(v_ip, mol, ao[1:4], aow, mask, ao_loc, True)
+
+            ao_dm0 = numint._dot_ao_dm(mol, ao[0], dm0, mask, shls_slice, ao_loc)
+            wf = weight * fxc[0,0]
+            for ia in range(mol.natm):
+                p0, p1 = aoslices[ia][2:]
+# First order density = rho1 * 2.  *2 is not applied because + c.c. in the end
+                rho1 = numpy.einsum('xpi,pi->xp', ao[1:,:,p0:p1], ao_dm0[:,p0:p1])
+                wv = wf * rho1
+                aow = [numint._scale_ao(ao[0], wv[i]) for i in range(3)]
+                rks_grad._d1_dot_(vmat[ia], mol, aow, ao[0], mask, ao_loc, True)
+            ao_dm0 = aow = None
+
+    elif xctype == 'GGA':
+        ao_deriv = 2
+        for ao, mask, weight, coords \
+                in ni.block_loop(mol, grids, nao, ao_deriv, max_memory):
+            rho = ni.eval_rho2(mol, ao[:4], mo_coeff, mo_occ, mask, xctype)
+            vxc, fxc = ni.eval_xc_eff(mf.xc, rho, 2, xctype=xctype)[1:3]
+            wv = weight * vxc
+            wv[0] *= .5
+            rks_grad._gga_grad_sum_(v_ip, mol, ao, wv, mask, ao_loc)
+
+            ao_dm0 = [numint._dot_ao_dm(mol, ao[i], dm0, mask, shls_slice, ao_loc)
+                      for i in range(4)]
+            wf = weight * fxc
+            for ia in range(mol.natm):
+                dR_rho1 = _make_dR_rho1(ao, ao_dm0, ia, aoslices, xctype)
+                wv = numpy.einsum('xyg,sxg->syg', wf, dR_rho1)
+                wv[:,0] *= .5
+                aow = [numint._scale_ao(ao[:4], wv[i,:4]) for i in range(3)]
+                rks_grad._d1_dot_(vmat[ia], mol, aow, ao[0], mask, ao_loc, True)
+            ao_dm0 = aow = None
+
+    else:
+        raise NotImplementedError('meta-GGA')
+
+    for ia in range(mol.natm):
+        p0, p1 = aoslices[ia][2:]
+        # vmat[ia,:,p0:p1] += v_ip[:,p0:p1]
+        vmat[ia] = -vmat[ia] - vmat[ia].transpose(0,2,1)
+
+    return vmat
+
 def get_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
              atmlst=None, chkfile=None, verbose=None):
     if chkfile is None:
@@ -76,11 +153,18 @@ def _rhf_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
         )
 
         from pyscf.hessian.rks import Hessian
-        from pyscf.hessian.rks import _get_vxc_deriv1
-        vxc1 = _get_vxc_deriv1(
+        vxc1 = pyscf.hessian.rks._get_vxc_deriv1(
             Hessian(mf_obj), mo_coeff=mo_coeff, 
             mo_occ=mo_occ, max_memory=mf_obj.max_memory,
         )
+
+        vxc2 = _get_vxc_deriv1(
+            Hessian(mf_obj), mo_coeff=mo_coeff, 
+            mo_occ=mo_occ, max_memory=mf_obj.max_memory,
+        )
+
+        assert numpy.allclose(vxc1, vxc2)
+        assert 1 == 2
 
         omega, alpha, hyb = ni.rsh_and_hybrid_coeff(
             mf_obj.xc, spin=mol.spin
@@ -94,6 +178,7 @@ def _rhf_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
         omega, alpha, hyb = 0.0, 0.0, 1.0
         is_hybrid = True
         vxc1 = None
+        vxc2 = None
     
     assert abs(omega) < 1e-10
 
