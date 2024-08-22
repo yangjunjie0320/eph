@@ -54,7 +54,7 @@ def solve_mo1(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
     else:
         raise NotImplementedError
 
-def _rhf_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
+def _rhf_h1ao(mf_obj, ia=0, mo_coeff=None, mo_occ=None, mo_energy=None,
               atmlst=None, chkfile=None):
     mol = mf_obj.mol
     aoslices = mol.aoslice_by_atom()
@@ -100,46 +100,44 @@ def _rhf_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
     ipovlp = get_ipovlp(mf_obj)
     assert ipovlp.shape == (3, nao, nao)
 
-    # add for the case of KS object
-    for i0, ia in enumerate(atmlst):
-        s0, s1, p0, p1 = aoslices[ia]
+    s0, s1, p0, p1 = aoslices[ia]
+    shls_slice = (s0, s1) + (0, nbas) * 3
+    script_dms  = ['ji->s1kl', -dm0[:, p0:p1]] # vj1
+    script_dms += ['lk->s1ij', -dm0]           # vj2
+    script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
+    script_dms += ['jk->s1il', -dm0]           # vk2
 
-        shls_slice = (s0, s1) + (0, nbas) * 3
-        script_dms  = ['ji->s1kl', -dm0[:, p0:p1]] # vj1
-        script_dms += ['lk->s1ij', -dm0]           # vj2
-        script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
-        script_dms += ['jk->s1il', -dm0]           # vk2
+    if is_hybrid:
+        res = get_jk1(
+            mf_obj, script_dms=script_dms,
+            shls_slice=shls_slice
+        )
 
-        if is_hybrid:
-            res = get_jk1(
-                mf_obj, script_dms=script_dms,
-                shls_slice=shls_slice
-            )
+        vj1, vj2, vk1, vk2 = res
+        vjk = vj1 - vk1 * 0.5 * hyb
+        vjk[:, p0:p1] += vj2 - vk2 * 0.5 * hyb
+    else:
+        res = get_jk1(
+            mf_obj, script_dms=script_dms[:4],
+            shls_slice=shls_slice
+        )
 
-            vj1, vj2, vk1, vk2 = res
-            vjk = vj1 - vk1 * 0.5 * hyb
-            vjk[:, p0:p1] += vj2 - vk2 * 0.5 * hyb
-        else:
-            res = get_jk1(
-                mf_obj, script_dms=script_dms[:4],
-                shls_slice=shls_slice
-            )
+        vj1, vj2 = res
+        vjk = vj1
+        vjk[:, p0:p1] += vj2
 
-            vj1, vj2 = res
-            vjk = vj1
-            vjk[:, p0:p1] += vj2
+        vk1, vk2 = None, None
+    
+    h1 = vjk + vjk.transpose(0, 2, 1)
+    h1 += hcore_deriv(ia)
+    if vxc1 is not None:
+        h1 += vxc1[ia]
 
-            vk1, vk2 = None, None
-        
-        h1 = vjk + vjk.transpose(0, 2, 1)
-        h1 += hcore_deriv(ia)
-        if vxc1 is not None:
-            h1 += vxc1[ia]
+    s1 = numpy.zeros_like(ipovlp)
+    s1[:, p0:p1, :] -= ipovlp[:, p0:p1]
+    s1[:, :, p0:p1] -= ipovlp[:, p0:p1].transpose(0, 2, 1)
 
-        s1 = numpy.zeros_like(ipovlp)
-        s1[:, p0:p1, :] -= ipovlp[:, p0:p1]
-        s1[:, :, p0:p1] -= ipovlp[:, p0:p1].transpose(0, 2, 1)
-
+    if chkfile is not None:
         key = 'scf_f1ao/%d' % ia # is this term d F / d R?
         lib.chkfile.save(chkfile, key, h1)
 
@@ -162,6 +160,7 @@ def _rhf_h1ao(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
         if vxc1 is not None:
             key = 'scf_vxc1/%d' % ia
             lib.chkfile.save(chkfile, key, vxc1[ia])
+    return 
 
 def _rhf_mo1(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
              atmlst=None, chkfile=None, verbose=None, 
