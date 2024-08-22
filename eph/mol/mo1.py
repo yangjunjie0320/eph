@@ -132,45 +132,25 @@ from jk import get_jk1, gen_hcore_deriv, get_ipovlp
 #         raise NotImplementedError
 
 def solve_mo1(mf_obj, ia=0, mo_coeff=None, mo_occ=None, mo_energy=None,
-              atmlst=None, chkfile=None):
+              atmlst=None, chkfile=None, verbose=None, conv_tol=1e-6,
+              max_cycle=50, level_shift=0.0):
+    log = lib.logger.new_logger(mf_obj, verbose=verbose)
+
     mol = mf_obj.mol
     aoslices = mol.aoslice_by_atom()
     nbas = mol.nbas
     if atmlst is None: atmlst = range(mol.natm)
 
     nao, nmo = mo_coeff.shape
+    norb = nmo
     orbo = mo_coeff[:, mo_occ>0]
     nocc = orbo.shape[1]
-    nvir = nmo - nocc
+    nvir = norb - nocc
     dm0 = mf_obj.make_rdm1(mo_coeff, mo_occ)
 
     from pyscf import dft
     if isinstance(mf_obj, dft.rks.KohnShamDFT):
-        # test if the functional has the second derivative
-        ni = mf_obj._numint
-        ni.libxc.test_deriv_order(
-            mf_obj.xc, 2, raise_error=True
-        )
-
-        from pyscf.hessian.rks import Hessian
-        vxc1 = pyscf.hessian.rks._get_vxc_deriv1(
-            Hessian(mf_obj), mo_coeff=mo_coeff, 
-            mo_occ=mo_occ, max_memory=mf_obj.max_memory,
-        )
-
-        vxc2 = _get_vxc_deriv1(
-            Hessian(mf_obj), mo_coeff=mo_coeff, 
-            mo_occ=mo_occ, max_memory=mf_obj.max_memory,
-        )
-
-        assert numpy.allclose(vxc1, vxc2)
-        assert 1 == 2
-
-        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(
-            mf_obj.xc, spin=mol.spin
-        )
-
-        is_hybrid = ni.libxc.is_hybrid_xc(mf_obj.xc)
+        raise NotImplementedError
 
     else: # is Hartree-Fock
         from pyscf.scf import hf
@@ -224,44 +204,6 @@ def solve_mo1(mf_obj, ia=0, mo_coeff=None, mo_occ=None, mo_energy=None,
     s1[:, p0:p1, :] -= ipovlp[:, p0:p1]
     s1[:, :, p0:p1] -= ipovlp[:, p0:p1].transpose(0, 2, 1)
 
-        # key = 'scf_f1ao/%d' % ia # is this term d F / d R?
-        # lib.chkfile.save(chkfile, key, h1)
-
-        # key = 'scf_s1ao/%d' % ia
-        # lib.chkfile.save(chkfile, key, s1)
-
-        # key = 'scf_j1ao/%d' % ia
-        # lib.chkfile.save(chkfile, key, vj1)
-
-        # key = 'scf_j2ao/%d' % ia
-        # lib.chkfile.save(chkfile, key, vj2)
-
-        # if is_hybrid:
-        #     key = 'scf_k1ao/%d' % ia
-        #     lib.chkfile.save(chkfile, key, vk1)
-
-        #     key = 'scf_k2ao/%d' % ia
-        #     lib.chkfile.save(chkfile, key, vk2)
-
-        # if vxc1 is not None:
-        #     key = 'scf_vxc1/%d' % ia
-        #     lib.chkfile.save(chkfile, key, vxc1[ia])
-
-def _rhf_mo1(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
-             atmlst=None, chkfile=None, verbose=None, 
-             level_shift=0.0, conv_tol=1e-8, max_cycle=50):
-    log = pyscf.lib.logger.new_logger(mf_obj, verbose)
-
-    mol = mf_obj.mol
-    if atmlst is None: atmlst = range(mol.natm)
-
-    nao, nmo = mo_coeff.shape
-    norb = nmo
-    orbo = mo_coeff[:, mo_occ>0]
-    nocc = orbo.shape[1]
-    nvir = nmo - nocc
-    dm0 = mf_obj.make_rdm1(mo_coeff, mo_occ)
-
     assert hasattr(mf_obj, 'gen_response')
     vresp = mf_obj.gen_response(mo_coeff, mo_occ, hermi=1)
 
@@ -291,42 +233,27 @@ def _rhf_mo1(mf_obj, mo_coeff=None, mo_occ=None, mo_energy=None,
         mf_obj.max_memory, lib.current_memory()[0]
     )
 
-    for ia0, ia1 in lib.prange(0, len(atmlst), blksize):
-        size = ia1 - ia0
+    h1 = numpy.asarray(h1).reshape(3, nao, nao)
+    s1 = numpy.asarray(s1).reshape(3, nao, nao)
 
-        assert os.path.exists(chkfile), '%s not found' % chkfile
-        h1 = [lib.chkfile.load(chkfile, 'scf_f1ao/%d' % ia) for ia in atmlst[ia0:ia1]]
-        s1 = [lib.chkfile.load(chkfile, 'scf_s1ao/%d' % ia) for ia in atmlst[ia0:ia1]]
-        h1 = numpy.asarray(h1).reshape(size, 3, nao, nao)
-        s1 = numpy.asarray(s1).reshape(size, 3, nao, nao)
+    h1 = numpy.einsum("xmn,mp,ni->xpi", h1, mo_coeff, orbo, optimize=True)
+    s1 = numpy.einsum("xmn,mp,ni->xpi", s1, mo_coeff, orbo, optimize=True)
+    h1 = h1.reshape(3, nmo, nocc)
+    s1 = s1.reshape(3, nmo, nocc)
 
-        h1 = numpy.einsum("axmn,mp,ni->axpi", h1, mo_coeff, orbo, optimize=True)
-        s1 = numpy.einsum("axmn,mp,ni->axpi", s1, mo_coeff, orbo, optimize=True)
-        h1 = h1.reshape(size * 3, nmo, nocc)
-        s1 = s1.reshape(size * 3, nmo, nocc)
+    z1, e1 = cphf.solve(
+        func, mo_energy, mo_occ, h1, s1,
+        tol=conv_tol * size,
+        max_cycle=max_cycle,
+        level_shift=level_shift
+    )
 
-        z1, e1 = cphf.solve(
-            func, mo_energy, mo_occ, h1, s1,
-            tol=conv_tol * size,
-            max_cycle=max_cycle,
-            level_shift=level_shift
-        )
+    t1 = numpy.einsum('mq,xqi->xmi', mo_coeff, z1).reshape(-1, nao, nocc)
+    dm1 = 2.0 * numpy.einsum('xmi,ni->xmn', t1, orbo)
+    dm1 = dm1 + dm1.transpose(0, 2, 1)
+    dm1 = dm1.reshape(size, 3, nao, nao)
 
-        t1 = numpy.einsum('mq,xqi->xmi', mo_coeff, z1).reshape(-1, nao, nocc)
-        dm1 = 2.0 * numpy.einsum('xmi,ni->xmn', t1, orbo)
-        dm1 = dm1 + dm1.transpose(0, 2, 1)
-        dm1 = dm1.reshape(size, 3, nao, nao)
-
-        e1 = e1.reshape(size, 3, nocc, nocc)
-        for ia in atmlst[ia0:ia1]:
-            key = 'scf_mo1/%d' % ia
-            lib.chkfile.save(chkfile, key, t1[ia])
-
-            key = 'scf_e1/%d' % ia
-            lib.chkfile.save(chkfile, key, e1[ia])
-
-            key = 'scf_dm1/%d' % ia
-            lib.chkfile.save(chkfile, key, dm1[ia])
+    return vjk1, dm1
 
 if __name__ == '__main__':
     from pyscf import gto, scf

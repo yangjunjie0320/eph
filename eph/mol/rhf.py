@@ -27,13 +27,13 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     if atmlst is None:    atmlst    = range(mol_obj.natm)
     nao, nmo = mo_coeff.shape[-2:]
 
-    chkfile = chkfile if chkfile is not None else eph_obj.chkfile
-    eph_obj.solve_mo1(
-        mo_energy=mo_energy, mo_coeff=mo_coeff, 
-        mo_occ=mo_occ, chkfile=chkfile,
-        atmlst=atmlst, verbose=log
-        )
-    assert os.path.exists(chkfile), '%s not found' % chkfile
+    # chkfile = chkfile if chkfile is not None else eph_obj.chkfile
+    # eph_obj.solve_mo1(
+    #     mo_energy=mo_energy, mo_coeff=mo_coeff, 
+    #     mo_occ=mo_occ, chkfile=chkfile,
+    #     atmlst=atmlst, verbose=log
+    #     )
+    # assert os.path.exists(chkfile), '%s not found' % chkfile
 
     from pyscf import dft
     if isinstance(scf_obj, dft.rks.KohnShamDFT):
@@ -64,25 +64,32 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     
     dv_ao = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
-        # what I need?
-        h1 = None
-        f1 = None
-        s1 = None
+        # # what I need?
+        # h1 = None
+        # f1 = None
+        # s1 = None
 
-        dm1 = None
-        # what is vjk1?
-        # f1 s1 are only used for cphf, not for the vjk1
+        # dm1 = None
+        # # what is vjk1?
+        # # f1 s1 are only used for cphf, not for the vjk1
 
-        dm1 = lib.chkfile.load(chkfile, 'scf_dm1/%d' % ia)
+        # dm1 = lib.chkfile.load(chkfile, 'scf_dm1/%d' % ia)
 
-        vjk1 = lib.chkfile.load(chkfile, 'scf_j1ao/%d' % ia)
-        if is_hybrid:
-            vk1 = lib.chkfile.load(chkfile, 'scf_k1ao/%d' % ia)
-            vjk1 -= 0.5 * hyb * vk1
+        # vjk1 = lib.chkfile.load(chkfile, 'scf_j1ao/%d' % ia)
+        # if is_hybrid:
+        #     vk1 = lib.chkfile.load(chkfile, 'scf_k1ao/%d' % ia)
+        #     vjk1 -= 0.5 * hyb * vk1
 
-        v1 = vjk1 + vjk1.transpose(0, 2, 1)
-        v1 = v1 + vresp(dm1) + vnuc_deriv(ia)
-        dv_ao.append(v1)
+        # v1 = vjk1 + vjk1.transpose(0, 2, 1)
+        # v1 = v1 + vresp(dm1) + vnuc_deriv(ia)
+        # dv_ao.append(v1)
+
+        from mo1 import solve_mo1
+        vjk1, dm1 = solve_mo1(
+            scf_obj, ia=ia,
+            mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ,
+            chkfile=chkfile, verbose=log
+        )
 
     dv_ao = numpy.array(dv_ao).reshape(len(atmlst), -1, 3, nao, nao)
     spin = dv_ao.shape[1]
