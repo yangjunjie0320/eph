@@ -233,27 +233,27 @@ def solve_mo1(mf_obj, ia=0, mo_coeff=None, mo_occ=None, mo_energy=None,
         mf_obj.max_memory, lib.current_memory()[0]
     )
 
-    h1 = numpy.asarray(h1).reshape(3, nao, nao)
-    s1 = numpy.asarray(s1).reshape(3, nao, nao)
+    # h1 = numpy.asarray(h1).reshape(3, nao, nao)
+    # s1 = numpy.asarray(s1).reshape(3, nao, nao)
 
-    h1 = numpy.einsum("xmn,mp,ni->xpi", h1, mo_coeff, orbo, optimize=True)
+    f1 = numpy.einsum("xmn,mp,ni->xpi", h1, mo_coeff, orbo, optimize=True)
     s1 = numpy.einsum("xmn,mp,ni->xpi", s1, mo_coeff, orbo, optimize=True)
-    h1 = h1.reshape(3, nmo, nocc)
+    f1 = f1.reshape(3, nmo, nocc)
     s1 = s1.reshape(3, nmo, nocc)
 
     z1, e1 = cphf.solve(
-        func, mo_energy, mo_occ, h1, s1,
-        tol=conv_tol * size,
-        max_cycle=max_cycle,
+        func, mo_energy, mo_occ, f1, s1,
+        tol=1e-20,
+        max_cycle=200,
         level_shift=level_shift
     )
 
     t1 = numpy.einsum('mq,xqi->xmi', mo_coeff, z1).reshape(-1, nao, nocc)
     dm1 = 2.0 * numpy.einsum('xmi,ni->xmn', t1, orbo)
     dm1 = dm1 + dm1.transpose(0, 2, 1)
-    dm1 = dm1.reshape(size, 3, nao, nao)
+    dm1 = dm1.reshape(3, nao, nao)
 
-    return vjk1, dm1
+    return vj1, vk1, dm1, h1, t1
 
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -274,11 +274,11 @@ if __name__ == '__main__':
     natm = mol.natm
     nao = mol.nao_nr()
 
-    mf = scf.RKS(mol)
+    mf = scf.RHF(mol)
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
     mf.max_cycle = 1000
-    mf.xc = "PBE0"
+    # mf.xc = "PBE0"
     mf.kernel()
 
     mo_occ = mf.mo_occ
@@ -289,8 +289,8 @@ if __name__ == '__main__':
     eph_obj = ElectronPhononCoupling(mf)
     eph_obj.chkfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR).name
     eph_obj.verbose = 0
-    eph_obj.solve_mo1(mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ)
-    res_sol = eph_obj.chkfile
+    # eph_obj.solve_mo1(mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ)
+    # res_sol = eph_obj.chkfile
 
     res_ref = mf.Hessian().make_h1(
         mo_coeff, mo_occ,
@@ -299,19 +299,27 @@ if __name__ == '__main__':
         verbose=10
     )
 
-    mf.Hessian().solve_mo1(
-        mo_energy, mo_coeff, mo_occ,
-        mf.chkfile, atmlst=range(natm),
-        verbose=10
-    )
+    mf.conv_tol_cpscf = 1e-20
+    hess_obj = mf.Hessian()
+    hess_obj.max_cycle = 200
+
 
     for ia in range(natm):
-        h1_sol = lib.chkfile.load(res_sol, 'scf_f1ao/%d' % ia)
-        h1_ref = lib.chkfile.load(res_ref, 'scf_f1ao/%d' % ia)
-        h1_err = abs(h1_sol - h1_ref).max()
+        hess_obj.solve_mo1(
+            mo_energy, mo_coeff, mo_occ,
+            mf.chkfile, atmlst=[ia],
+            verbose=10, max_memory=0
+        )
 
-        m1_sol = lib.chkfile.load(res_sol, 'scf_mo1/%d' % ia)
+        h1_ref = lib.chkfile.load(res_ref, 'scf_f1ao/%d' % ia)
         m1_ref = lib.chkfile.load(res_ref, 'scf_mo1/%d' % ia)
+
+        h1_sol, m1_sol = solve_mo1(
+            mf, ia=ia, mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ,
+            atmlst=None, chkfile=None, verbose=10
+        )[-2:]
+
+        h1_err = abs(h1_sol - h1_ref).max()
         m1_err = abs(m1_sol - m1_ref).max()
 
         print("ia = %2d, h1_err = %6.4e, m1_err = %6.4e" % (ia, h1_err, m1_err))

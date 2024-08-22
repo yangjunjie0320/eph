@@ -85,11 +85,19 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
         # dv_ao.append(v1)
 
         from mo1 import solve_mo1
-        vjk1, dm1 = solve_mo1(
+        vj1, vk1, dm1 = solve_mo1(
             scf_obj, ia=ia,
             mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ,
             chkfile=chkfile, verbose=log
         )
+
+        vjk1 = vj1 + vj1.transpose(0, 2, 1)
+        if is_hybrid:
+            vk1 = vk1 + vk1.transpose(0, 2, 1)
+            vjk1 -= 0.5 * hyb * vk1
+
+        v1 = vjk1 + vresp(dm1) + vnuc_deriv(ia)
+        dv_ao.append(v1)
 
     dv_ao = numpy.array(dv_ao).reshape(len(atmlst), -1, 3, nao, nao)
     spin = dv_ao.shape[1]
