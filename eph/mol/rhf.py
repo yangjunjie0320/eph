@@ -251,10 +251,16 @@ if __name__ == '__main__':
     print(dv_sol.shape)
 
     # Test the finite difference against the analytic results
-    eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
-    eph_fd.verbose = 0
-    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-        dv_ref = eph_fd.kernel(stepsize=stepsize)
-        err = abs(dv_sol - dv_ref).max()
-        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+    # eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
+    # eph_fd.verbose = 0
+    # for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
+    #     dv_ref = eph_fd.kernel(stepsize=stepsize)
+    #     err = abs(dv_sol - dv_ref).max()
+    #     print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
+    from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
+    ma, mb = gen_moles(mol, stepsize=1e-4 / 2.0)
+    mfs = run_mfs(mf, ma, mb)
+    dv_ref = get_vmat(mf, mfs, stepsize=1e-4)
+
+    print(dv_sol.shape, dv_ref.shape)
