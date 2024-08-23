@@ -7,7 +7,6 @@ from pyscf.lib import logger
 
 from pyscf import hessian
 from pyscf.hessian.rhf import _get_jk
-from pyscf.hessian.rks import _get_vxc_deriv1
 
 import eph
 import eph.mol.eph_fd
@@ -35,7 +34,7 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     for i0, ia in enumerate(atmlst):
         s1 = ovlp_deriv(ia)
         f1, v1 = fock_deriv(ia)
-        v1 = v1
+        v1 = v1 + vnuc_deriv(ia)
 
         (t1, e1), dm1 = eph_obj.solve_mo1(
             vresp, s1=s1, f1=f1,
@@ -44,7 +43,7 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
             mo_occ=mo_occ, verbose=log
         )
 
-        v1 += vnuc_deriv(ia) + vresp(dm1)
+        v1 += vresp(dm1)
         dv_ao.append(v1)
 
     return dv_ao
@@ -69,7 +68,7 @@ def solve_mo1(vresp, s1=None, f1=None, mo_energy=None,
     f1 = f1.reshape(3, nmo, nocc)
     s1 = s1.reshape(3, nmo, nocc)
 
-    z1, e1 = cphf.solve(
+    z1, e1 = cphf.kernel(
         func, mo_energy, mo_occ, f1, s1,
         tol=tol, max_cycle=max_cycle, 
         level_shift=level_shift,
@@ -174,13 +173,15 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             )
 
             is_hybrid = ni.libxc.is_hybrid_xc(scf_obj.xc)
+
+            # from pyscf.hessian.rks import _get_vxc_deriv1
+            from pyscf.eph.rks import _get_vxc_deriv1
             vxc1 = _get_vxc_deriv1(
                 self, mo_coeff, mo_occ, 
                 max_memory=self.max_memory
             )
             
         else: # is Hartree-Fock
-            assert isinstance(scf_obj, scf.hf.RHF)
             omega, alpha, hyb = 0.0, 0.0, 1.0
             is_hybrid = True
             vxc1 = None
@@ -190,27 +191,27 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             h1 = hcor_deriv(ia)
 
             s0, s1, p0, p1 = aoslices[ia]
-            script_dms  = ['ji->s1kl', -dm0[:, p0:p1]] # vj1
+            script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
             script_dms += ['lk->s1ij', -dm0]           # vj2
             script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
             script_dms += ['jk->s1il', -dm0]           # vk2
             shls_slice = (s0, s1) + (0, nbas) * 3
             
             vj1, vj2, vk1, vk2 = _get_jk(
-                mol_obj, 'int2e_ip1', 3, 's1',
+                mol_obj, 'int2e_ip1', 3, 's2kl',
                 script_dms=script_dms,
                 shls_slice=shls_slice
             )
 
-            # jk1 stands for the skeleton derivative of 
-            # coulomb and exchange integrals
-            vjk = vj1 - vk1 * 0.5 * hyb
-            jk1 = vjk + vjk.transpose(0, 2, 1)
+            f1 = vj1 - 0.5 * hyb * vk1
+            f1[:, p0:p1] += vj2 - 0.5 * hyb * vk2
+            f1 = h1 + f1 + f1.transpose(0, 2, 1)
 
-            vjk[:, p0:p1] += vj2 - vk2 * 0.5 * hyb
-            vjk = vjk + vjk.transpose(0, 2, 1)
-
-            f1 = h1 + vjk
+            jk1 = vj1 - 0.5 * hyb * vk1
+            jk1 = jk1 + jk1.transpose(0, 2, 1)
+            if vxc1 is not None:
+                f1  += vxc1[ia]
+                jk1 += vxc1[ia]
             return f1, jk1
 
         return func
@@ -235,7 +236,6 @@ if __name__ == '__main__':
     nao = mol.nao_nr()
 
     mf = scf.RHF(mol)
-    # mf.xc = "PBE0"
     mf.conv_tol = 1e-12
     mf.conv_tol_grad = 1e-12
     mf.max_cycle = 1000
