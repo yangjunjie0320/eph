@@ -150,7 +150,8 @@ class ElectronPhononCouplingBase(lib.StreamObject):
     def _finalize(self, dv_ao):
         assert dv_ao is not None
         if not isinstance(dv_ao, numpy.ndarray):
-            spin = dv_ao[0].shape[0]
+            spin = 1 if dv_ao[0].ndim == 3 else 2
+            # spin = dv_ao[0].shape[0]
             nao = dv_ao[0].shape[-1]
             dv_ao = numpy.asarray(dv_ao)
             dv_ao = dv_ao.reshape(-1, 3, spin, nao, nao)
@@ -165,6 +166,9 @@ class ElectronPhononCouplingBase(lib.StreamObject):
         elif spin == 2:
             dv_ao = dv_ao.reshape(2, -1, nao, nao)
             assert dv_ao.shape == (spin, natm * 3, nao, nao)
+
+        else:
+            raise RuntimeError("spin != 1 or 2")
 
         return dv_ao
 
