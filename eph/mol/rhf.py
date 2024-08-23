@@ -148,6 +148,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             level_shift=self.level_shift
         )
     
+    def gen_vxc_deriv(self, mo_coeff, mo_occ):
+        return None, (0.0, 0.0, 1.0, True)
+    
     def gen_fock_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None):
         scf_obj = self.base
 
@@ -161,63 +164,54 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         nvir = nmo - nocc
 
         dm0 = scf_obj.make_rdm1(mo_coeff, mo_occ)
-        if isinstance(scf_obj, dft.rks.KohnShamDFT):
-            # test if the functional has the second derivative
-            ni = scf_obj._numint
-            ni.libxc.test_deriv_order(
-                scf_obj.xc, 2, raise_error=True
-            )
 
-            omega, alpha, hyb = ni.rsh_and_hybrid_coeff(
-                scf_obj.xc, spin=mol_obj.spin
-            )
-
-            is_hybrid = ni.libxc.is_hybrid_xc(scf_obj.xc)
-
-            from pyscf.hessian.rks import _get_vxc_deriv1
-            
-            vxc1 = _get_vxc_deriv1(
-                self, mo_coeff, mo_occ, 
-                max_memory=self.max_memory
-            )
-
-            from pyscf.eph.rks import _get_vxc_deriv1
-            vxc2 = _get_vxc_deriv1(
-                self, mo_coeff, mo_occ, 
-                max_memory=self.max_memory
-            )
-            
-        else: # is Hartree-Fock
-            omega, alpha, hyb = 0.0, 0.0, 1.0
-            is_hybrid = True
-            vxc1 = vxc2 = None
-
+        tmp = self.gen_vxc_deriv(mo_coeff, mo_occ)
+        vxc_deriv = tmp[0]
+        omega, alpha, hyb, is_hybrid = tmp[1]
         hcor_deriv = scf_obj.nuc_grad_method().hcore_generator()
+
         def func(ia):
             h1 = hcor_deriv(ia)
 
             s0, s1, p0, p1 = aoslices[ia]
+            shls_slice = (s0, s1) + (0, nbas) * 3
+
             script_dms  = ['ji->s2kl', -dm0[:, p0:p1]] # vj1
             script_dms += ['lk->s1ij', -dm0]           # vj2
-            script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
-            script_dms += ['jk->s1il', -dm0]           # vk2
-            shls_slice = (s0, s1) + (0, nbas) * 3
-            
-            vj1, vj2, vk1, vk2 = _get_jk(
-                mol_obj, 'int2e_ip1', 3, 's2kl',
-                script_dms=script_dms,
-                shls_slice=shls_slice
-            )
 
-            f1 = vj1 - 0.5 * hyb * vk1
-            f1[:, p0:p1] += vj2 - 0.5 * hyb * vk2
-            f1 = h1 + f1 + f1.transpose(0, 2, 1)
+            if not is_hybrid:
+                vj1, vj2 = _get_jk(
+                    mol_obj, 'int2e_ip1', 3, 's2kl',
+                    script_dms=script_dms,
+                    shls_slice=shls_slice
+                )
 
-            jk1 = vj1 - 0.5 * hyb * vk1
-            jk1 = jk1 + jk1.transpose(0, 2, 1)
-            if vxc1 is not None and vxc2 is not None:
-                f1  += vxc1[ia]
-                jk1 += vxc2[ia]
+                jk1 = vj1 + vj1.transpose(0, 2, 1)
+                vjk = vj1
+                vjk[:, p0:p1] += vj2
+                vjk += vjk.transpose(0, 2, 1)
+
+            else:
+                script_dms += ['li->s1kj', -dm0[:, p0:p1]] # vk1
+                script_dms += ['jk->s1il', -dm0]           # vk2
+
+                vj1, vj2, vk1, vk2 = _get_jk(
+                    mol_obj, 'int2e_ip1', 3, 's2kl',
+                    script_dms=script_dms,
+                    shls_slice=shls_slice
+                )
+
+                jk1 = vj1 - hyb * 0.5 * vk1
+                jk1 = jk1 + jk1.transpose(0, 2, 1)
+
+                vjk = vj1 - hyb * 0.5 * vk1
+                vjk[:, p0:p1] += vj2 - hyb * 0.5 * vk2
+                vjk += vjk.transpose(0, 2, 1)
+
+            f1 = h1 + vjk
+            if vxc_deriv is not None:
+                f1 += vxc_deriv[0, ia]
+                jk1 += vxc_deriv[1, ia]
             return f1, jk1
 
         return func
