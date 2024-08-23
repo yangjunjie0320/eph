@@ -174,9 +174,15 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
             is_hybrid = ni.libxc.is_hybrid_xc(scf_obj.xc)
 
-            # from pyscf.hessian.rks import _get_vxc_deriv1
-            from pyscf.eph.rks import _get_vxc_deriv1
+            from pyscf.hessian.rks import _get_vxc_deriv1
+            
             vxc1 = _get_vxc_deriv1(
+                self, mo_coeff, mo_occ, 
+                max_memory=self.max_memory
+            )
+
+            from pyscf.eph.rks import _get_vxc_deriv1
+            vxc2 = _get_vxc_deriv1(
                 self, mo_coeff, mo_occ, 
                 max_memory=self.max_memory
             )
@@ -184,7 +190,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         else: # is Hartree-Fock
             omega, alpha, hyb = 0.0, 0.0, 1.0
             is_hybrid = True
-            vxc1 = None
+            vxc1 = vxc2 = None
 
         hcor_deriv = scf_obj.nuc_grad_method().hcore_generator()
         def func(ia):
@@ -209,9 +215,9 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
             jk1 = vj1 - 0.5 * hyb * vk1
             jk1 = jk1 + jk1.transpose(0, 2, 1)
-            if vxc1 is not None:
+            if vxc1 is not None and vxc2 is not None:
                 f1  += vxc1[ia]
-                jk1 += vxc1[ia]
+                jk1 += vxc2[ia]
             return f1, jk1
 
         return func
@@ -248,19 +254,12 @@ if __name__ == '__main__':
     eph_obj = ElectronPhononCoupling(mf)
     eph_obj.grids = None
     dv_sol  = eph_obj.kernel()
-    print(dv_sol.shape)
 
     # Test the finite difference against the analytic results
-    # eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
-    # eph_fd.verbose = 0
-    # for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-    #     dv_ref = eph_fd.kernel(stepsize=stepsize)
-    #     err = abs(dv_sol - dv_ref).max()
-    #     print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+    eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
+        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        err = abs(dv_sol - dv_ref).max()
+        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
 
-    from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
-    ma, mb = gen_moles(mol, stepsize=1e-4 / 2.0)
-    mfs = run_mfs(mf, ma, mb)
-    dv_ref = get_vmat(mf, mfs, stepsize=1e-4)
-
-    print(dv_sol.shape, dv_ref.shape)
