@@ -243,14 +243,11 @@ if __name__ == '__main__':
     from ase.build import bulk
     from pyscf.pbc.tools.pyscf_ase import ase_atoms_to_pyscf
 
-    a = 3.5668
+    c = bulk("Li", "bcc", a=3.5, cubic=True)
 
     cell = gto.Cell()
-    cell.atom = """
-    Li 1.00000 1.00000 1.00000
-    Li 1.00000 1.00000 2.00000
-    """
-    cell.a = numpy.diag([2, 2, 3])
+    cell.atom = ase_atoms_to_pyscf(c)
+    cell.a = c.cell
     cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
     cell.unit = 'A'
@@ -296,8 +293,8 @@ if __name__ == '__main__':
     for x in range(3 * cell.natm):
         err = abs(dv_sol[x] - dv_ref[x]).max()
 
-        if abs(dv_sol[x]).max() < 1e-6:
-            continue
+        # if abs(dv_sol[x]).max() < 1e-6:
+        #     continue
         
         print(f"\nix = {x}, error = {err:6.4e}")
         print(f"dv_sol[{x}] = ")
