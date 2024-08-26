@@ -113,6 +113,13 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
             s1[:, :, p0:p1] -= ipovlp[:, p0:p1].transpose(0, 2, 1)
             return s1
         return func
+    
+    def gen_hcore_deriv(self, mol=None):
+        mol = self.mol if mol is None else mol
+        grad_obj = self.base.nuc_grad_method()
+
+        from pyscf.grad.rhf import hcore_generator
+        return hcore_generator(grad_obj, mol=mol)
         
     def gen_fock_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None):
         raise NotImplementedError
@@ -170,10 +177,11 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         tmp = self.gen_vxc_deriv(mo_coeff, mo_occ)
         vxc_deriv = tmp[0]
         omega, alpha, hyb, is_hybrid = tmp[1]
-        hcor_deriv = scf_obj.nuc_grad_method().hcore_generator()
+
+        hcore_deriv = self.gen_hcore_deriv(mol=mol_obj)
 
         def func(ia):
-            h1 = hcor_deriv(ia)
+            h1 = hcore_deriv(ia)
 
             s0, s1, p0, p1 = aoslices[ia]
             shls_slice = (s0, s1) + (0, nbas) * 3
