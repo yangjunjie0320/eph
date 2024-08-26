@@ -204,5 +204,17 @@ if __name__ == '__main__':
     err = abs(dv_sol - dv_ref).max()
     print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
 
-    print(dv_sol[2])
-    print(dv_ref[2])
+    for x in range(3 * cell.natm):
+        err = abs(dv_sol[x] - dv_ref[x]).max()
+
+        if abs(dv_sol[x]).max() < 1e-6:
+            continue
+        
+        print(f"\nix = {x}, error = {err:6.4e}")
+        print(f"dv_sol[{x}] = ")
+        numpy.savetxt(mf.stdout, dv_sol[x], fmt="% 6.4e", delimiter=", ")
+
+        print(f"dv_ref[{x}] = ")
+        numpy.savetxt(mf.stdout, dv_ref[x], fmt="% 6.4e", delimiter=", ")
+
+        # assert 1 == 2
