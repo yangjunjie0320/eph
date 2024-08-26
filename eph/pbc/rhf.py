@@ -256,6 +256,7 @@ if __name__ == '__main__':
     cell.unit = 'A'
     cell.verbose = 4
     cell.ke_cutoff = 100
+    cell.exp_to_discard = 0.1
     cell.build()
 
     mf = scf.RHF(cell)
