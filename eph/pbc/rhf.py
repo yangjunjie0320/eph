@@ -240,18 +240,16 @@ if __name__ == '__main__':
     from pyscf.pbc import gto, scf
     from pyscf.pbc.dft import multigrid
 
-    from ase.build import bulk
-    from pyscf.pbc.tools.pyscf_ase import ase_atoms_to_pyscf
-
-    c = bulk("Li", "bcc", a=3.5, cubic=True)
-
     cell = gto.Cell()
-    cell.atom = ase_atoms_to_pyscf(c)
-    cell.a = c.cell
+    cell.atom = '''
+    Li 1.000000 1.000000 1.000000
+    Li 1.000000 1.000000 2.000000
+    '''
+    cell.a = numpy.diag([2.0, 2.0, 3.0])
     cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
     cell.unit = 'A'
-    cell.verbose = 4
+    cell.verbose = 0
     cell.ke_cutoff = 100
     cell.exp_to_discard = 0.1
     cell.build()
@@ -302,5 +300,8 @@ if __name__ == '__main__':
 
         print(f"dv_ref[{x}] = ")
         numpy.savetxt(mf.stdout, dv_ref[x], fmt="% 6.4e", delimiter=", ")
+
+        print(f"dv_sol / dv_ref = ")
+        numpy.savetxt(mf.stdout, dv_sol[x] / dv_ref[x], fmt="% 6.4e", delimiter=", ")
 
         # assert 1 == 2

@@ -95,14 +95,16 @@ pyscf.pbc.dft.uks.UKS.nuc_grad_method = lambda self: pyscf.pbc.grad.uks.Gradient
 # Gamma-point electron-phonon coupling for PBC
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
-        mf = self.base.to_kscf()
+        if atmlst is None:
+            atmlst = range(self.cell.natm)
+
+        mf = self.base # .to_kscf()
         cell_obj = mf.cell
         nao = cell_obj.nao_nr()
         natm = len(atmlst)
 
         kscf_obj = mf.to_kscf()
         dm0 = kscf_obj.make_rdm1()
-        scan_obj = kscf_obj.as_scanner()
         kpts = mf.kpts
 
         grad_obj = kscf_obj.nuc_grad_method()
@@ -112,7 +114,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
 
         v1e  = grad_obj.get_hcore()
         v1e -= numpy.asarray(cell_obj.pbc_intor("int1e_ipkin", kpts=kpts))
-        assert v1e.shape == (3, 1, nao, nao)
+        assert v1e.shape == (1, 3, nao, nao)
 
         v0 = veff1 - v1e.transpose(1, 0, 2, 3)
         assert v0.shape == (3, 1, nao, nao)
@@ -131,11 +133,17 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             c1.unit = "Bohr"
             c1.build()
 
-            scan_obj(c1, dm0=dm0)
-            dm1 = scan_obj.make_rdm1()
-            v1 = scan_obj.get_veff(dm=dm1)
-            h1 = scan_obj.get_hcore()
-            t1 = numpy.asarray(c1.pbc_intor('int1e_kin', kpts=kpts))
+            s1 = kscf_obj.__class__(c1, kpts=kpts)
+            s1.exxdiv = None # kscf_obj.exxdiv
+            if hasattr(kscf_obj, "xc"):
+                s1.xc = kscf_obj.xc
+            s1.conv_tol = mf.conv_tol
+            s1.conv_tol_grad = mf.conv_tol_grad
+            s1.kernel(dm0=dm0)
+            dm1 = s1.make_rdm1()
+            v1  = s1.get_veff(dm_kpts=dm1)
+            h1  = s1.get_hcore()
+            t1  = numpy.asarray(c1.pbc_intor('int1e_kin', kpts=kpts))
             v1 += (h1 - t1)
             # v1 += (scan_obj.get_hcore() - numpy.asarray(cell_obj.pbc_intor('int1e_kin', kpts=kpts)))
 
@@ -144,11 +152,17 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             c2.unit = "Bohr"
             c2.build()
 
-            scan_obj(c2, dm0=dm0)
-            dm2 = scan_obj.make_rdm1()
-            v2 = scan_obj.get_veff(dm=dm2)
-            h2 = scan_obj.get_hcore()
-            t2 = numpy.asarray(c2.pbc_intor('int1e_kin', kpts=kpts))
+            s2 = kscf_obj.__class__(c2, kpts=kpts)
+            s2.exxdiv = None # mf.exxdiv
+            if hasattr(kscf_obj, "xc"):
+                s2.xc = kscf_obj.xc
+            s2.conv_tol = mf.conv_tol
+            s2.conv_tol_grad = mf.conv_tol_grad
+            s2.kernel(dm0=dm0)
+            dm2 = s2.make_rdm1()
+            v2  = s2.get_veff(dm_kpts=dm2)
+            h2  = s2.get_hcore()
+            t2  = numpy.asarray(c2.pbc_intor('int1e_kin', kpts=kpts))
             v2 += (h2 - t2)
 
             # assert v1.shape == v2.shape == (nao, nao)
@@ -181,8 +195,8 @@ if __name__ == '__main__':
     cell.build()
 
     stepsize = 1e-4
-    mf = scf.RKS(cell)
-    mf.xc = "PBE"
+    mf = scf.RHF(cell)
+    # mf.xc = "PBE"
     mf.verbose = 0
     mf.exxdiv = None
     mf.conv_tol = 1e-10
@@ -193,10 +207,10 @@ if __name__ == '__main__':
 
     eph_obj = ElectronPhononCoupling(mf)
     eph_obj.verbose = 0
-    eph_obj.kernel(stepsize=stepsize)
+    dv_sol = eph_obj.kernel(stepsize=stepsize/2.0)
     
-    mf = scf.RKS(cell)
-    mf.xc = "PBE"
+    mf = scf.RHF(cell)
+    # mf.xc = "PBE"
     mf.verbose = 0
     mf.exxdiv = None
     mf.conv_tol = 1e-10
@@ -205,7 +219,7 @@ if __name__ == '__main__':
     mf.kernel(dm0=dm0)
 
     from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+    cells_a, cells_b = gen_cells(cell, stepsize/2.0)
     mfk = mf.to_kscf()
     mfset = run_mfs(mfk, cells_a, cells_b)
     dv_ref = get_vmat(mfk, mfset, stepsize) 
@@ -216,9 +230,6 @@ if __name__ == '__main__':
 
     for x in range(3 * cell.natm):
         err = abs(dv_sol[x] - dv_ref[x]).max()
-
-        if abs(dv_sol[x]).max() < 1e-6:
-            continue
         
         print(f"\nix = {x}, error = {err:6.4e}")
         print(f"dv_sol[{x}] = ")
