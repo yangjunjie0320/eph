@@ -95,126 +95,72 @@ pyscf.pbc.dft.uks.UKS.nuc_grad_method = lambda self: pyscf.pbc.grad.uks.Gradient
 # Gamma-point electron-phonon coupling for PBC
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
-        cell = self.cell
-        nao = cell.nao_nr()
-
-        if atmlst is None:
-            atmlst = range(cell.natm)
-
+        mf = self.base.to_kscf()
+        cell_obj = mf.cell
+        nao = cell_obj.nao_nr()
         natm = len(atmlst)
-        self.dump_flags()
 
-        scf_obj = self.base # .to_kscf()
-        kscf_obj = scf_obj.to_kscf()
-        # grad_obj is for kscf_obj
-        grad_obj = kscf_obj.nuc_grad_method()
-        kpts = scf_obj.kpts
-
-        from pyscf.pbc.lib.kpts_helper import gamma_point
-        assert not isinstance(self.base, KSCF)
-        assert gamma_point(kpts)
-        assert scf_obj.converged
-
+        kscf_obj = mf.to_kscf()
         dm0 = kscf_obj.make_rdm1()
-        spin = dm0.size // nao // nao
+        scan_obj = kscf_obj.as_scanner()
+        kpts = mf.kpts
 
-        from pyscf.pbc.grad.krhf import get_hcore as grad_get_hcore
-        # v0  = cell.pbc_intor("int1e_ipkin", kpts=kpts) - grad_get_hcore(cell, kpts)
-        # v0  = grad_obj.get_veff(dm=dm0)[:, 0] - v0[0]
-        # assert v0.shape == (3, nao, nao)]
-        v1eff = grad_obj.get_veff(dm=dm0)
-        v1e = grad_obj.get_hcore() - numpy.asarray(cell.pbc_intor("int1e_ipkin", kpts=kpts))
-        v0 = v1eff - v1e.transpose(1, 0, 2, 3)
+        grad_obj = kscf_obj.nuc_grad_method()
+
+        veff1 = grad_obj.get_veff()
+        assert veff1.shape == (3, 1, nao, nao)
+
+        v1e  = grad_obj.get_hcore()
+        v1e -= numpy.asarray(cell_obj.pbc_intor("int1e_ipkin", kpts=kpts))
+        assert v1e.shape == (3, 1, nao, nao)
+
+        v0 = veff1 - v1e.transpose(1, 0, 2, 3)
         assert v0.shape == (3, 1, nao, nao)
-    
+
         dv_ao = []
         for ix in range(3 * natm):
-            dv_ao_ia_x = _fd(
-                scf_obj=scf_obj, ix=ix, atmlst=atmlst,
-                stepsize=stepsize, v0=v0, dm0=dm0
-                )
-            
             ia, x = divmod(ix, 3)
+            p0, p1 = cell_obj.aoslice_by_atom()[ia][2:]
 
-            p0, p1 = cell.aoslice_by_atom()[ia][2:]
+            xyz = cell_obj.atom_coords(unit="Bohr")
+            dxyz = numpy.zeros_like(xyz)
+            dxyz[ia, x] = stepsize
 
-            dv_ao_ia_x[p0:p1, :] -= v0[x, 0, p0:p1]
-            dv_ao_ia_x[:, p0:p1] -= v0[x, 0, p0:p1].T.conj()
-            dv_ao.append(dv_ao_ia_x)
+            c1 = cell_obj.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
+            c1.a = cell_obj.lattice_vectors()
+            c1.unit = "Bohr"
+            c1.build()
 
-        dv_ao = numpy.asarray(dv_ao).reshape(natm, 3, nao, nao)
+            scan_obj(c1, dm0=dm0)
+            dm1 = scan_obj.make_rdm1()
+            v1 = scan_obj.get_veff(dm=dm1)
+            h1 = scan_obj.get_hcore()
+            t1 = numpy.asarray(c1.pbc_intor('int1e_kin', kpts=kpts))
+            v1 += (h1 - t1)
+            # v1 += (scan_obj.get_hcore() - numpy.asarray(cell_obj.pbc_intor('int1e_kin', kpts=kpts)))
 
-        # for ia in atmlst:
-        #     p0, p1 = cell.aoslice_by_atom()[ia][2:]
-        #     dv_ao[ia, :, p0:p1, :] -= v0[:, p0:p1, :]
-        #     dv_ao[ia, :, :, p0:p1] -= v0[:, p0:p1, :].transpose(0, 2, 1)
+            c2 = cell_obj.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
+            c2.a = cell_obj.lattice_vectors()
+            c2.unit = "Bohr"
+            c2.build()
 
-        self.dv_ao = dv_ao # self._finalize(dv_ao)
-        return self.dv_ao.reshape(3 * natm, nao, nao)
-    
-def run(mf, atmlst=None, stepsize=1e-4):
-    cell_obj = mf.cell
-    nao = cell_obj.nao_nr()
+            scan_obj(c2, dm0=dm0)
+            dm2 = scan_obj.make_rdm1()
+            v2 = scan_obj.get_veff(dm=dm2)
+            h2 = scan_obj.get_hcore()
+            t2 = numpy.asarray(c2.pbc_intor('int1e_kin', kpts=kpts))
+            v2 += (h2 - t2)
 
-    kscf_obj = mf.to_kscf()
-    dm0 = kscf_obj.make_rdm1()
-    scan_obj = kscf_obj.as_scanner()
-    kpts = mf.kpts
+            # assert v1.shape == v2.shape == (nao, nao)
+            dv = (v1 - v2) / (2 * stepsize)
+            dv[:, p0:p1, :] -= v0[x, :, p0:p1]
+            dv[:, :, p0:p1] -= v0[x, :, p0:p1].transpose(0, 2, 1).conj()
+            assert dv.shape == (1, nao, nao)
 
-    grad_obj = kscf_obj.nuc_grad_method()
+            dv_ao.append(dv)
 
-    veff1 = grad_obj.get_veff()
-    v1e  = grad_obj.get_hcore()
-    v1e -= numpy.asarray(cell_obj.pbc_intor("int1e_ipkin", kpts=kpts))
-    v0 = veff1 - v1e.transpose(1, 0, 2, 3)
-
-    assert v0.shape == (3, 1, nao, nao)
-
-    dv_ao = []
-    natm = cell_obj.natm
-    for ix in range(3 * natm):
-        ia, x = divmod(ix, 3)
-        p0, p1 = cell_obj.aoslice_by_atom()[ia][2:]
-
-        xyz = cell_obj.atom_coords(unit="Bohr")
-        dxyz = numpy.zeros_like(xyz)
-        dxyz[ia, x] = stepsize
-
-        c1 = cell_obj.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-        c1.a = cell_obj.lattice_vectors()
-        c1.unit = "Bohr"
-        c1.build()
-
-        scan_obj(c1, dm0=dm0)
-        dm1 = scan_obj.make_rdm1()
-        v1 = scan_obj.get_veff(dm=dm1)
-        h1 = scan_obj.get_hcore()
-        t1 = numpy.asarray(c1.pbc_intor('int1e_kin', kpts=kpts))
-        v1 += (h1 - t1)
-        # v1 += (scan_obj.get_hcore() - numpy.asarray(cell_obj.pbc_intor('int1e_kin', kpts=kpts)))
-
-        c2 = cell_obj.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-        c2.a = cell_obj.lattice_vectors()
-        c2.unit = "Bohr"
-        c2.build()
-
-        scan_obj(c2, dm0=dm0)
-        dm2 = scan_obj.make_rdm1()
-        v2 = scan_obj.get_veff(dm=dm2)
-        h2 = scan_obj.get_hcore()
-        t2 = numpy.asarray(c2.pbc_intor('int1e_kin', kpts=kpts))
-        v2 += (h2 - t2)
-
-        # assert v1.shape == v2.shape == (nao, nao)
-        dv = (v1 - v2) / (2 * stepsize)
-        dv[:, p0:p1, :] -= v0[x, :, p0:p1]
-        dv[:, :, p0:p1] -= v0[x, :, p0:p1].transpose(0, 2, 1).conj()
-        assert dv.shape == (1, nao, nao)
-
-        dv_ao.append(dv)
-
-    dv_ao = numpy.asarray(dv_ao).reshape(natm * 3, nao, nao)
-    return dv_ao
+        dv_ao = numpy.asarray(dv_ao).reshape(natm * 3, nao, nao)
+        return dv_ao
 
 if __name__ == '__main__':
     from pyscf.pbc import gto, scf
@@ -245,9 +191,9 @@ if __name__ == '__main__':
     mf.kernel()
     dm0 = mf.make_rdm1()
 
-    # eph_obj = ElectronPhononCoupling(mf)
-    # eph_obj.verbose = 0
-    dv_sol  = run(mf, stepsize=stepsize)
+    eph_obj = ElectronPhononCoupling(mf)
+    eph_obj.verbose = 0
+    eph_obj.kernel(stepsize=stepsize)
     
     mf = scf.RKS(cell)
     mf.xc = "PBE"
