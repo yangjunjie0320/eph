@@ -196,6 +196,8 @@ if __name__ == '__main__':
     mfk = mf.to_kscf()
     mfset = run_mfs(mfk, cells_a, cells_b)
     dv_ref = get_vmat(mfk, mfset, stepsize) 
+    print(dv_ref.shape)
+    assert 1 == 2
 
     eph_obj = ElectronPhononCoupling(mf)
     dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0)
@@ -214,7 +216,7 @@ if __name__ == '__main__':
         print(f"dv_sol[{x}] = ")
         numpy.savetxt(mf.stdout, dv_sol[x], fmt="% 6.4e", delimiter=", ")
 
-        print(f"dv_ref[{x}] = ")
-        numpy.savetxt(mf.stdout, dv_ref[x], fmt="% 6.4e", delimiter=", ")
+        # print(f"dv_ref[{x}] = ")
+        # numpy.savetxt(mf.stdout, dv_ref[x], fmt="% 6.4e", delimiter=", ")
 
         # assert 1 == 2
