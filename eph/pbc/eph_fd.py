@@ -33,17 +33,20 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
         self.dv_ao = None
 
 def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
+    # the finite difference will only be performed inside
+    # the atmlst
     ia, x = atmlst[ix // 3], ix % 3
 
     cell = scf_obj.cell
     scan_obj = scf_obj.as_scanner()
+    nao = cell.nao_nr()
 
     stdout = scf_obj.stdout
     s = cell.aoslice_by_atom()
     nao = s[-1][-1]
     p0, p1 = s[ia][2:]
 
-    spin = dm0.shape[0]
+    spin = dm0.size // nao // nao
     assert v0.shape == (spin, 3, nao, nao)
 
     xyz = cell.atom_coords(unit="Bohr")
@@ -66,6 +69,7 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     c1.unit = "Bohr"
     c1.build()
 
+    dm0 = dm0.reshape(scf_obj.make_rdm1().shape)
     scan_obj(c1, dm0=dm0)
     dm1 = scan_obj.make_rdm1()
     v1  = scan_obj.get_veff(dm=dm1).reshape(spin, nao, nao)
@@ -85,6 +89,7 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     dv = (v1 - v2) / (2 * stepsize)
     dv[:, p0:p1, :] -= v0[:, x, p0:p1, :]
     dv[:, :, p0:p1] -= v0[:, x, p0:p1, :].transpose(0, 2, 1).conj()
+
     return dv
 
 import pyscf.pbc.grad
@@ -93,6 +98,7 @@ pyscf.pbc.scf.uhf.UHF.nuc_grad_method = lambda self: pyscf.pbc.grad.uhf.Gradient
 pyscf.pbc.dft.rks.RKS.nuc_grad_method = lambda self: pyscf.pbc.grad.rks.Gradients(self)
 pyscf.pbc.dft.uks.UKS.nuc_grad_method = lambda self: pyscf.pbc.grad.uks.Gradients(self)
 
+# Gamma-point electron-phonon coupling for PBC
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def kernel(self, atmlst=None, stepsize=1e-4):
         cell = self.cell
@@ -104,8 +110,10 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         natm = len(atmlst)
         self.dump_flags()
 
-        scf_obj = self.base.to_kscf()
-        grad_obj = scf_obj.nuc_grad_method()
+        scf_obj = self.base # .to_kscf()
+        kscf_obj = scf_obj.to_kscf()
+        # grad_obj is for kscf_obj
+        grad_obj = kscf_obj.nuc_grad_method()
         kpts = scf_obj.kpts
 
         from pyscf.pbc.lib.kpts_helper import gamma_point
@@ -120,9 +128,11 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         v0  = cell.pbc_intor("int1e_ipkin", kpts=kpts)
         v0  = numpy.asarray(v0) - grad_get_hcore(cell, kpts)[0]
         v0  = v0.reshape(3, 1, nao, nao)
-        v0 += grad_obj.get_veff(dm=dm0).reshape(3, spin, nao, nao)
+        v0 += grad_obj.get_veff(dm=kscf_obj.make_rdm1()).reshape(3, spin, nao, nao)
+        print(v0.shape)
         v0  = v0.transpose(1, 0, 2, 3)
-        assert v0.shape == (spin, 3, nao, nao)
+        print(spin, nao, v0.shape)
+        assert v0.shape == (spin, 3, nao, nao), "v0.shape = %s" % str(v0.shape)
     
         dv_ao = []
         for ix in range(3 * natm):

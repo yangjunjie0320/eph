@@ -17,10 +17,10 @@ def get_int2e_ip1(mydf):
     dphi = numpy.asarray(ao[1:])
     coul = tools.get_coulG(cell, mesh=mesh)
 
-    assert dm.shape == (nao, nao)
-    assert phi.shape == (ng, nao)
-    assert dphi.shape == (3, ng, nao)
-    assert coul.size == ng
+    # assert dm.shape == (nao, nao)
+    # assert phi.shape == (ng, nao)
+    # assert dphi.shape == (3, ng, nao)
+    # assert coul.size == ng
 
     rho = numpy.einsum("gm,gn->mng", phi.conj(), phi)
     rho_g = tools.fft(rho.reshape(-1, ng), mesh)
@@ -28,7 +28,7 @@ def get_int2e_ip1(mydf):
     v_r = tools.ifft(v_g, mesh).real
     v_r *= cell.vol / ng
     v_r = v_r.reshape(nao, nao, ng)
-    return numpy.einsum("xgm,gn,klg->xmnkl", dphi, phi.conj(), v_r)
+    return numpy.einsum("xgm,gn,klg->xmnkl", dphi, phi.conj(), v_r, optimize=True)
 
 def _get_jk(cell, intor, comp, aosym, script_dms, shls_slice, cintopt=None, vhfopt=None):
     """
@@ -44,19 +44,37 @@ def _get_jk(cell, intor, comp, aosym, script_dms, shls_slice, cintopt=None, vhfo
     assert cintopt is None
     assert vhfopt is None
 
+    df_obj = df.FFTDF(cell)
+    int2e_ip1 = get_int2e_ip1(df_obj)
+
     # deal with the script_dms
     assert len(script_dms) % 2 == 0
+    s0, s1, p0, p1 = (None,) * 4
+    for (s0, s1, p0, p1) in cell.aoslice_by_atom():
+        if s0 == shls_slice[0] and s1 == shls_slice[1]:
+            break
 
-    einsum_str = []
-    for s, dm in script_dms:
-        assert "->s1" in s
-        s1, s2 = s.split('->s1')
-        assert len(s1) == 2
-        assert len(s2) == 2
-        einsum_str.append("xijkl,%s->x%s" % (s1, s2))
-
-    int2e_ip1 = get_int2e_ip1(cell)
+    assert s0 is not None
+    assert s1 is not None
+    assert p0 is not None
+    assert p1 is not None
 
     res = []
-    for e in einsum_str:
-        res.append(numpy.einsum(e, int2e_ip1))
+    for i in range(0, len(script_dms), 2):
+        s  = script_dms[i]
+        dm = script_dms[i+1]
+
+        assert "->s1" in s, "Only '->s1' is supported: %s" % s
+        s1, s2 = s.split('->s1')
+
+        assert len(s1) == 2
+        assert len(s2) == 2
+
+        res.append(
+            numpy.einsum(
+                "xijkl,%s->x%s" % (s1, s2),
+                int2e_ip1[:, p0:p1], dm, optimize=True
+            )
+        )
+
+    return res

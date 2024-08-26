@@ -92,11 +92,13 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
 
     def gen_vnuc_deriv(self, mol=None):
         mol = self.mol if mol is None else mol
+
         def func(ia):
             with mol.with_rinv_at_nucleus(ia):
                 vrinv  =  mol.intor('int1e_iprinv', comp=3)
                 vrinv *= -mol.atom_charge(ia)
             return vrinv + vrinv.transpose(0, 2, 1)
+        
         return func
 
     def gen_ovlp_deriv(self, mol=None):
@@ -112,7 +114,7 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
             return s1
         return func
         
-    def gen_fock_deriv(self):
+    def gen_fock_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None):
         raise NotImplementedError
     
     def kernel(self, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
