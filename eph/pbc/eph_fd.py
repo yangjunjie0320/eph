@@ -150,37 +150,32 @@ if __name__ == '__main__':
     from pyscf.pbc.dft import multigrid
 
     cell = gto.Cell()
-    cell.atom = '''
-    C 0.0000  0.0000  0.0000
-    C 0.8917  0.8917  0.8917
-    C 1.7834  1.7834  0.0000
-    C 2.6751  2.6751  0.8917
-    C 1.7834  0.0000  1.7834
-    C 2.6751  0.8917  2.6751
-    C 0.0000  1.7834  1.7834
-    C 0.8917  2.6751  2.6751'''
+    cell.atom = """
+    Li 1.00000 1.00000 1.00000
+    Li 1.00000 1.00000 2.00000
+    """
+    cell.a = numpy.diag([2, 2, 3])
     cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
-    cell.a = numpy.eye(3) * 3.5668
     cell.unit = 'A'
     cell.verbose = 4
-    cell.ke_cutoff = 200
+    cell.ke_cutoff = 100
+    cell.exp_to_discard = 0.1
     cell.build()
 
     stepsize = 1e-4
-    mf = scf.RKS(cell)
-    mf.xc = "PBE"
-    mf.with_df = multigrid.MultiGridFFTDF2(cell)
-    mf.init_guess = 'atom'
-    mf.verbose = 0
-    mf.conv_tol = 1e-10
-    mf.conv_tol_grad = 1e-8
-    mf.max_cycle = 100
-    mf.kernel(dm0=None)
-    dm0 = mf.make_rdm1()
-
-    eph_obj = ElectronPhononCoupling(mf)
-    dv_1 = eph_obj.kernel(stepsize=stepsize, atmlst=[0])
+    # mf = scf.RKS(cell)
+    # mf.xc = "PBE"
+    # mf.with_df = multigrid.MultiGridFFTDF2(cell)
+    # mf.init_guess = 'atom'
+    # mf.verbose = 0
+    # mf.conv_tol = 1e-10
+    # mf.conv_tol_grad = 1e-8
+    # mf.max_cycle = 100
+    # mf.kernel(dm0=None)
+    # dm0 = mf.make_rdm1()
+    # eph_obj = ElectronPhononCoupling(mf)
+    # dv_1 = eph_obj.kernel(stepsize=stepsize, atmlst=[0])
 
     mf = scf.RKS(cell)
     mf.xc = "PBE"
@@ -190,22 +185,24 @@ if __name__ == '__main__':
     mf.conv_tol_grad = 1e-8
     mf.max_cycle = 100
     mf.kernel()
-    eph_obj = ElectronPhononCoupling(mf)
-    dv_2 = eph_obj.kernel(stepsize=stepsize, atmlst=[0])
+    # eph_obj = ElectronPhononCoupling(mf)
+    # dv_2 = eph_obj.kernel(stepsize=stepsize, atmlst=[0])
 
-    err = abs(dv_1 - dv_2).max()
+    # err = abs(dv_1 - dv_2).max()
+    # print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
+
+    from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
+    cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
+    mfk = mf.to_kscf()
+    mfset = run_mfs(mfk, cells_a, cells_b)
+    dv_ref = get_vmat(mfk, mfset, stepsize) 
+
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0)
+    dv_ref = dv_ref.reshape(dv_sol.shape)
+
+    err = abs(dv_sol - dv_ref).max()
     print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
 
-
-    # from pyscf.pbc.eph.eph_fd import gen_cells, run_mfs, get_vmat
-    # cells_a, cells_b = gen_cells(cell, stepsize / 2.0)
-    # mfk = mf.to_kscf()
-    # mfset = run_mfs(mfk, cells_a[:3], cells_b[:3])
-    # dv_ref = get_vmat(mfk, mfset, stepsize) 
-
-    # eph_obj = ElectronPhononCoupling(mf)
-    # dv_sol  = eph_obj.kernel(stepsize=stepsize / 2.0, atmlst=[0])
-    # dv_ref = dv_ref.reshape(dv_sol.shape)
-
-    # err = abs(dv_sol - dv_ref).max()
-    # print("stepsize = % 6.2e, error = % 6.2e" % (stepsize, err))
+    print(dv_sol[2])
+    print(dv_ref[2])
