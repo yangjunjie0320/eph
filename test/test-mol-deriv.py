@@ -2,7 +2,7 @@ import os, sys
 import numpy, scipy
 
 import pyscf
-from pyscf import gto, scf
+from pyscf import gto, scf, ao2mo
 
 import eph
 
@@ -25,35 +25,50 @@ def deriv_fd(mf, stepsize=1e-4):
         h1 = scan_obj.get_hcore()
         s1 = scan_obj.get_ovlp()
         d1 = scan_obj.make_rdm1()
+        j1, k1 = scan_obj.get_jk(dm0)
         f1 = h1 + scan_obj.get_veff(m1, dm0)
-        
+        eri1 = ao2mo.restore(1, scan_obj._eri, nao).reshape(nao, nao, nao, nao)
+        assert eri1.shape == (nao, nao, nao, nao)
 
         m2 = mf.mol.set_geom_(x0 - dx, unit='Bohr', inplace=False)
         scan_obj(m2)
         h2 = scan_obj.get_hcore()
         s2 = scan_obj.get_ovlp()
         d2 = scan_obj.make_rdm1()
+        j2, k2 = scan_obj.get_jk(dm0)
         f2 = h2 + scan_obj.get_veff(m2, dm0)
+        eri2 = ao2mo.restore(1, scan_obj._eri, nao).reshape(nao, nao, nao, nao)
+        assert eri2.shape == (nao, nao, nao, nao)
 
         dh = (h1 - h2) / (2 * stepsize)
         ds = (s1 - s2) / (2 * stepsize)
         dd = (d1 - d2) / (2 * stepsize)
         df = (f1 - f2) / (2 * stepsize)
 
+        dj = (j1 - j2) / (2 * stepsize)
+        dk = (k1 - k2) / (2 * stepsize)
+        deri = (eri1 - eri2) / (2 * stepsize)
+        deri = deri.reshape(nao * nao, nao * nao)
+
         res.append(
             {
                 'dh': dh,
                 'ds': ds,
                 'dd': dd,
-                'df': df
+                'df': df,
+                'dj': dj,
+                'dk': dk,
+                'deri': deri
             }
         )
 
     return res
     
-def deriv_an(mf, stepsize=1e-4):
+def deriv_an(mf, dm0=None, stepsize=1e-4):
     natm = mf.mol.natm
     nao = mf.mol.nao_nr()
+    nbas = mf.mol.nbas
+
     mo_energy = mf.mo_energy
     mo_coeff = mf.mo_coeff
     mo_occ = mf.mo_occ
@@ -65,13 +80,18 @@ def deriv_an(mf, stepsize=1e-4):
     fock_deriv = eph_obj.gen_fock_deriv(mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ)
     ovlp_deriv = eph_obj.gen_ovlp_deriv(mol=mf.mol)
     hcor_deriv = eph_obj.gen_hcore_deriv(mol=mf.mol)
+    int2e_ip1 = mf.mol.intor('int2e_ip1').reshape(3, nao, nao, nao, nao)
+
+    # check the permutation symmetry of int2e_ip1
+    err = abs(int2e_ip1 - int2e_ip1.transpose(0, 1, 2, 4, 3)).max()
+    assert err < 1e-10
 
     res = []
 
-    for ix in range(natm):
-        s1 = ovlp_deriv(ix)
-        f1, jk1 = fock_deriv(ix)
-        h1 = hcor_deriv(ix)
+    for ia, (s0, s1, p0, p1) in enumerate(mf.mol.aoslice_by_atom()):
+        s1 = ovlp_deriv(ia)
+        h1 = hcor_deriv(ia)
+        f1, jk1 = fock_deriv(ia)
 
         (t1, e1), d1 = eph_obj.solve_mo1(
             vresp, s1=s1, f1=f1,
@@ -80,10 +100,18 @@ def deriv_an(mf, stepsize=1e-4):
             mo_occ=mo_occ,
         )
 
+        deri = numpy.zeros((3, nao, nao, nao, nao))
+        deri[:, p0:p1, :, :, :]  = int2e_ip1[:, p0:p1, :, :, :]
+        deri[:, :, p0:p1, :, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 2, 1, 3, 4)
+        deri[:, :, :, p0:p1, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 1, 2)
+        deri[:, :, :, :, p0:p1] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 2, 1)
+        deri = -deri.reshape(3, nao * nao, nao * nao)
+
         assert s1.shape == (3, nao, nao)
         assert f1.shape == (3, nao, nao)
         assert d1.shape == (3, nao, nao)
         assert d1.shape == (3, nao, nao)
+        assert deri.shape == (3, nao * nao, nao * nao)
 
         for x in range(3):
             res.append(
@@ -91,7 +119,9 @@ def deriv_an(mf, stepsize=1e-4):
                     'dh': h1[x],
                     'ds': s1[x],
                     'dd': d1[x],
-                    'df': f1[x]
+                    'df': f1[x],
+
+                    'deri': deri[x]
                 }
             )
 
@@ -127,16 +157,22 @@ for ix in range(natm * 3):
     r2 = an[ix]
 
     for k in r1.keys():
-        v1 = r1[k]
-        v2 = r2[k]
-        assert numpy.allclose(v1, v2, atol=1e-6), f"{k} {ix} {v1} {v2}"
+        if k in ["dh", "ds", "dd", "df", "deri"]:
+            v1 = r1[k]
+            v2 = r2[k]
+            err = abs(v1 - v2).max()
 
-        print(f"\n{k = }, {ix = }, annalytical = ")
-        numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
-        print(f"{k = }, {ix = }, finite difference = ")
-        numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
-        err = abs(v1 - v2).max()
-        print(f"{k = }, {ix = }, error = {err:6.4e}")
+            v1 = v1[:10, :10]
+            v2 = v2[:10, :10]
+
+            print(f"\n{k = }, {ix = }, annalytical = ")
+            numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
+            print(f"{k = }, {ix = }, finite difference = ")
+            numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
+            
+            print(f"{k = }, {ix = }, error = {err:6.4e}")
+
+            assert err < 1e-6, "Error too large"
 
 print("All tests passed")
 

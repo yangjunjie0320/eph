@@ -118,7 +118,7 @@ class ElectronPhononCouplingBase(eph.mol.rhf.ElectronPhononCouplingBase):
         cell = self.cell if cell is None else cell
         return gen_vnuc_deriv(cell)
     
-    def gen_hcor_deriv(self, mol=None, cell=None):
+    def gen_hcore_deriv(self, mol=None, cell=None):
         cell = self.cell if cell is None else cell
         from pyscf.pbc.grad.krhf import hcore_generator
 
@@ -148,7 +148,8 @@ class ElectronPhononCouplingBase(eph.mol.rhf.ElectronPhononCouplingBase):
     
 class ElectronPhononCoupling(ElectronPhononCouplingBase):
     def __init__(self, method):
-        assert isinstance(method, scf.hf.RHF)
+        # print("method = ", method)
+        # assert isinstance(method, scf.hf.RHF)
         assert not isinstance(method, pyscf.pbc.scf.khf.KRHF)
         assert not isinstance(method, pyscf.pbc.dft.KohnShamDFT)
         ElectronPhononCouplingBase.__init__(self, method)
@@ -187,10 +188,10 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         omega, alpha, hyb, is_hybrid = tmp[1]
         # assert not is_hybrid
 
-        hcor_deriv = self.gen_hcor_deriv()
+        hcore_deriv = self.gen_hcore_deriv()
 
         def func(ia):
-            h1 = hcor_deriv(ia)
+            h1 = hcore_deriv(ia)
 
             s0, s1, p0, p1 = aoslices[ia]
             shls_slice = (s0, s1) + (0, nbas) * 3
@@ -198,7 +199,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             script_dms  = ['ji->s1kl', -dm0[:, p0:p1]] # vj1
             script_dms += ['lk->s1ij', -dm0]           # vj2
 
-            from jk import _get_jk #  shall be replaced with faster functions
+            from eph.pbc.jk import _get_jk #  shall be replaced with faster functions
             if not is_hybrid:
                 vj1, vj2 = _get_jk(
                     mol_obj, 'int2e_ip1', 3, 's1',
@@ -232,7 +233,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             if vxc_deriv is not None:
                 f1 += vxc_deriv[0, ia]
                 jk1 += vxc_deriv[1, ia]
-            return f1, jk1
+            return h1, vj1, vj2, vk1, vk2
 
         return func
 
