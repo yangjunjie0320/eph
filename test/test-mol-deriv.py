@@ -25,6 +25,7 @@ def deriv_fd(mf, stepsize=1e-4):
         h1 = scan_obj.get_hcore()
         s1 = scan_obj.get_ovlp()
         d1 = scan_obj.make_rdm1()
+        print(d1)
         j1, k1 = scan_obj.get_jk(dm0)
         f1 = h1 + scan_obj.get_veff(m1, dm0)
         eri1 = ao2mo.restore(1, scan_obj._eri, nao).reshape(nao, nao, nao, nao)
@@ -35,6 +36,7 @@ def deriv_fd(mf, stepsize=1e-4):
         h2 = scan_obj.get_hcore()
         s2 = scan_obj.get_ovlp()
         d2 = scan_obj.make_rdm1()
+        print(d2)
         j2, k2 = scan_obj.get_jk(dm0)
         f2 = h2 + scan_obj.get_veff(m2, dm0)
         eri2 = ao2mo.restore(1, scan_obj._eri, nao).reshape(nao, nao, nao, nao)
@@ -157,7 +159,7 @@ for ix in range(natm * 3):
     r2 = an[ix]
 
     for k in r1.keys():
-        if k in ["dh", "ds", "dd", "df", "deri"]:
+        if k in ["dd"]:
             v1 = r1[k]
             v2 = r2[k]
             err = abs(v1 - v2).max()

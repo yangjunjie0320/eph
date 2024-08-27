@@ -96,11 +96,7 @@ def _get_jk(cell, intor, comp, aosym, script_dms, shls_slice, cintopt=None, vhfo
         s  = script_dms[i].split('->s1')
         dm = script_dms[i+1]
 
-        einsum_expr = "xijkl,%s->x%s" % (s[0], s[1])
-        print(einsum_expr)
-        print(int2e_ip1[:, p0:p1])
-        print(dm)
-                                         
+        einsum_expr = "xijkl,%s->x%s" % (s[0], s[1])                   
         res.append(
             numpy.einsum(einsum_expr, int2e_ip1[:, p0:p1], dm)
         )

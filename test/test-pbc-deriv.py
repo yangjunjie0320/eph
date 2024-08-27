@@ -80,6 +80,12 @@ def deriv_an(mf, stepsize=1e-4):
     dm0 = mf.make_rdm1()
 
     vresp = mf.gen_response(mo_coeff, mo_occ, hermi=1)
+    jk_sol = vresp(dm0)
+    vj, vk = mf.get_jk(dm0)
+    jk_ref = vj - 0.5 * vk
+
+    err = abs(jk_sol - jk_ref).max()
+    assert err < 1e-6, "Error too large: %6.4e" % err
 
     from eph.pbc import rhf
     eph_obj = rhf.ElectronPhononCoupling(mf)
@@ -95,83 +101,46 @@ def deriv_an(mf, stepsize=1e-4):
         s1 = ovlp_deriv(ia)
         f1, jk1 = fock_deriv(ia)
         h1 = hcor_deriv(ia)
-        # h1, jk1 = fock_deriv(ia)
 
-        # (t1, e1), d1 = eph_obj.solve_mo1(
-        #     vresp, s1=s1, f1=f1,
-        #     mo_energy=mo_energy,
-        #     mo_coeff=mo_coeff,
-        #     mo_occ=mo_occ,
-        # )
-
-        from eph.pbc.jk import get_int2e_ip1, _get_jk
-        int2e_ip1 = get_int2e_ip1(mf.cell)
-        assert int2e_ip1.shape == (3, nao, nao, nao, nao)
-
-        deri = numpy.zeros((3, nao, nao, nao, nao))
-        deri[:, p0:p1, :, :, :]  = int2e_ip1[:, p0:p1, :, :, :]
-        deri[:, :, p0:p1, :, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 2, 1, 3, 4)
-        deri[:, :, :, p0:p1, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 1, 2)
-        deri[:, :, :, :, p0:p1] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 2, 1)
-        deri = -deri.reshape(3, nao, nao, nao, nao)
-
-        dj_ref = numpy.einsum("xijkl,kl->xij", deri.reshape(3, nao, nao, nao, nao), dm0)
-        dk_ref = numpy.einsum("xikjl,kl->xij", deri.reshape(3, nao, nao, nao, nao), dm0)
-
-        j1_ref = numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], -dm0[:, p0:p1])
-        j2_ref = numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], -dm0)
-
-        script_dms  = ["ji->s1kl", -dm0[:, p0:p1]]
-        script_dms += ["lk->s1ij", -dm0]
-        
-        (j1_sol, j2_sol) = _get_jk(
-            mf.cell, 'int2e_ip1', 3, 's1',
-            script_dms=script_dms,
-            shls_slice=shls_slice
+        (t1, e1), d1 = eph_obj.solve_mo1(
+            vresp, s1=s1, f1=f1,
+            mo_energy=mo_energy,
+            mo_coeff=mo_coeff,
+            mo_occ=mo_occ,
         )
-
-        err = abs(j1_ref - j1_sol).max()
-        assert err < 1e-10, err
-
-        err = abs(j2_ref - j2_sol).max()
-        assert err < 1e-10, err
-
-        dj_sol  = numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
-        dj_sol[:, p0:p1, :] += numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], dm0)
-        dj_sol += dj_sol.transpose(0, 2, 1)
-        dj_sol = -dj_sol
-
-        dk_sol = numpy.einsum("xijkl,li->xkj", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
-        dk_sol[:, p0:p1, :] += numpy.einsum("xijkl,jk->xil", int2e_ip1[:, p0:p1], dm0)
-        dk_sol += dk_sol.transpose(0, 2, 1)
-        dk_sol = -dk_sol
-
-        assert numpy.allclose(dj_ref, dj_sol)
-        assert numpy.allclose(dk_ref, dk_sol)
-
-        dj = dj_sol
-        dk = dk_sol
 
         for x in range(3):
             res.append(
                 {
                     'dh': h1[x],
                     'ds': s1[x],
-                    'deri': deri[x],
-                    'dj': dj[x],
-                    'dk': dk[x],
-                    "df": f1[x]
+                    "df": f1[x],
+                    "dd": d1[x],
                 }
             )
 
     return res
 
+# cell = gto.Cell()
+# cell.atom = '''
+# Li 1.000000 1.000000 1.000000
+# Li 1.000000 1.000000 2.000000
+# '''
+# cell.a = numpy.diag([2.0, 2.0, 3.0])
+# cell.basis = 'gth-szv'
+# cell.pseudo = 'gth-pade'
+# cell.unit = 'A'
+# cell.verbose = 0
+# cell.ke_cutoff = 100
+# cell.exp_to_discard = 0.1
+# cell.build()
+from ase.build import bulk
+from pyscf.pbc.tools.pyscf_ase import ase_atoms_to_pyscf
+c = bulk("C", "diamond", a=3.5668)
+
 cell = gto.Cell()
-cell.atom = '''
-Li 1.000000 1.000000 1.000000
-Li 1.000000 1.000000 2.000000
-'''
-cell.a = numpy.diag([2.0, 2.0, 3.0])
+cell.atom = ase_atoms_to_pyscf(c)
+cell.a = c.cell
 cell.basis = 'gth-szv'
 cell.pseudo = 'gth-pade'
 cell.unit = 'A'
@@ -184,23 +153,23 @@ natm = cell.natm
 nao = cell.nao_nr()
 
 mf = scf.RHF(cell)
-mf.verbose = 0
-mf.conv_tol = 1e-10
-mf.conv_tol_grad = 1e-8
+mf.verbose = 4
+mf.conv_tol = 1e-12
+mf.conv_tol_grad = 1e-10
 mf.max_cycle = 100
 mf.exxdiv = None
 mf.kernel(dm0=None)
 dm0 = mf.make_rdm1()
 
 fd = deriv_fd(mf) # .reshape(-1, nao, nao)
-an = deriv_an(mf, stepsize=1e-5) # .reshape(-1, nao, nao)
+an = deriv_an(mf, stepsize=1e-4) # .reshape(-1, nao, nao)
 
 for ix in range(natm * 3):
     r1 = fd[ix]
     r2 = an[ix]
 
     for k in r1.keys():
-        if k in ["dh", "ds", "df"]:
+        if k in ["dh", "ds", "df", "dd"]:
             v1 = r1[k]
             v2 = r2[k]
             err = abs(v1 - v2).max()

@@ -101,6 +101,40 @@ def gen_vnuc_deriv(cell):
     
     return func
 
+def solve_mo1(vresp, s1=None, f1=None, mo_energy=None, 
+              mo_coeff=None, mo_occ=None, verbose=None,
+              max_cycle=50, tol=1e-8, level_shift=0.0):
+    log = logger.new_logger(verbose, None)
+    nao, nmo = mo_coeff.shape
+    orbo = mo_coeff[:, mo_occ > 0]
+    nocc = orbo.shape[1]
+    nvir = nmo - nocc
+
+    def func(t1):
+        t1 = t1.reshape(-1, nmo, nocc)
+        dm1 = 2.0 * numpy.einsum('xpi,mp,ni->xmn', t1, mo_coeff, orbo, optimize=True)
+        v1 = vresp(dm1 + dm1.transpose(0, 2, 1))
+        return numpy.einsum("xmn,mp,ni->xpi", v1, mo_coeff, orbo, optimize=True)
+
+    f1 = numpy.einsum("xmn,mp,ni->xpi", f1, mo_coeff, orbo, optimize=True)
+    s1 = numpy.einsum("xmn,mp,ni->xpi", s1, mo_coeff, orbo, optimize=True)
+    f1 = f1.reshape(3, nmo, nocc)
+    s1 = s1.reshape(3, nmo, nocc)
+
+    from pyscf.scf import cphf
+    z1, e1 = cphf.kernel(
+        func, mo_energy, mo_occ, f1, s1,
+        tol=tol, max_cycle=max_cycle, 
+        level_shift=level_shift,
+        verbose=log
+    )
+
+    t1 = numpy.einsum('mq,xqi->xmi', mo_coeff, z1).reshape(-1, nao, nocc)
+    dm1 = 2.0 * numpy.einsum('xmi,ni->xmn', t1, orbo)
+    dm1 = dm1 + dm1.transpose(0, 2, 1)
+    dm1 = dm1.reshape(3, nao, nao)
+    return (t1, e1), dm1
+
 # The base for the analytic EPC calculation
 class ElectronPhononCouplingBase(eph.mol.rhf.ElectronPhononCouplingBase):
     level_shift = 0.0
@@ -186,8 +220,6 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         tmp = self.gen_vxc_deriv(mo_coeff, mo_occ)
         vxc_deriv = tmp[0]
         omega, alpha, hyb, is_hybrid = tmp[1]
-        # assert not is_hybrid
-
         hcore_deriv = self.gen_hcore_deriv()
 
         def func(ia):
@@ -239,15 +271,15 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
         return func
 
 if __name__ == '__main__':
+    from ase.build import bulk
+    from pyscf.pbc.tools.pyscf_ase import ase_atoms_to_pyscf
+    c = bulk("C", "diamond", a=3.5668)
+
     from pyscf.pbc import gto, scf
-    from pyscf.pbc.dft import multigrid
 
     cell = gto.Cell()
-    cell.atom = '''
-    Li 1.000000 1.000000 1.000000
-    Li 1.000000 1.000000 2.000000
-    '''
-    cell.a = numpy.diag([2.0, 2.0, 3.0])
+    cell.atom = ase_atoms_to_pyscf(c)
+    cell.a = c.cell
     cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
     cell.unit = 'A'
