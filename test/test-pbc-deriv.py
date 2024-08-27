@@ -90,7 +90,7 @@ def deriv_an(mf, stepsize=1e-4):
         s1 = ovlp_deriv(ia)
         # f1, jk1 = fock_deriv(ix)
         # h1 = hcor_deriv(ix)
-        h1, jk1 = fock_deriv(ia)
+        # h1, jk1 = fock_deriv(ia)
 
         # (t1, e1), d1 = eph_obj.solve_mo1(
         #     vresp, s1=s1, f1=f1,
@@ -100,7 +100,8 @@ def deriv_an(mf, stepsize=1e-4):
         # )
 
         from eph.pbc.jk import get_int2e_ip1, _get_jk
-        int2e_ip1 = get_int2e_ip1(mf.with_df)
+        int2e_ip1 = get_int2e_ip1(mf.cell)
+        int2e_ip1_ref = int2e_ip1
         assert int2e_ip1.shape == (3, nao, nao, nao, nao)
 
         deri = numpy.zeros((3, nao, nao, nao, nao))
@@ -109,28 +110,27 @@ def deriv_an(mf, stepsize=1e-4):
         deri[:, :, :, p0:p1, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 1, 2)
         deri[:, :, :, :, p0:p1] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 2, 1)
         deri = -deri.reshape(3, nao, nao, nao, nao)
+
         dj_ref = numpy.einsum("xijkl,kl->xij", deri.reshape(3, nao, nao, nao, nao), dm0)
         dk_ref = numpy.einsum("xikjl,kl->xij", deri.reshape(3, nao, nao, nao, nao), dm0)
 
-        # the other way of computing the derivatives
-        j1_ref = -numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
-        j2_ref = -numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], dm0)
+        j1_ref = numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], -dm0[:, p0:p1])
+        j2_ref = numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], -dm0)
 
         script_dms  = ["ji->s1kl", -dm0[:, p0:p1]]
         script_dms += ["lk->s1ij", -dm0]
         
-        j1_sol, j2_sol = _get_jk(
+        (j1_sol, j2_sol) = _get_jk(
             mf.cell, 'int2e_ip1', 3, 's1',
             script_dms=script_dms,
             shls_slice=shls_slice
         )
 
-        print(j1_ref[0])
-        print(j1_sol[0])
-        assert 1 == 2
-        
-        assert numpy.allclose(j1_ref, j1_sol)
-        assert numpy.allclose(j2_ref, j2_sol)
+        err = abs(j1_ref - j1_sol).max()
+        assert err < 1e-10, err
+
+        err = abs(j2_ref - j2_sol).max()
+        assert err < 1e-10, err
 
         dj_sol  = numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
         dj_sol[:, p0:p1, :] += numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], dm0)

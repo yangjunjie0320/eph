@@ -2,14 +2,17 @@ import numpy
 from pyscf.pbc import df
 from pyscf.pbc import tools
 
-def get_int2e_ip1(mydf):
+def get_int2e_ip1(cell):
+    mydf = df.FFTDF(cell)
     cell = mydf.cell
     mesh = mydf.mesh
+    print("mesh:", mesh)
     nao = cell.nao_nr()
 
     coord = numpy.asarray(mydf.grids.coords)
     weigh = numpy.asarray(mydf.grids.weights)
     ng = len(weigh)
+    print("ng:", ng)
 
     from pyscf.pbc.dft.numint import eval_ao
     ao   = eval_ao(cell, coord, deriv=1)
@@ -71,8 +74,7 @@ def _get_jk(cell, intor, comp, aosym, script_dms, shls_slice, cintopt=None, vhfo
     assert cintopt is None
     assert vhfopt is None
 
-    df_obj = df.FFTDF(cell)
-    int2e_ip1 = get_int2e_ip1(df_obj)
+    int2e_ip1 = get_int2e_ip1(cell)
     nao = cell.nao_nr()
 
     # deal with the script_dms
@@ -87,22 +89,20 @@ def _get_jk(cell, intor, comp, aosym, script_dms, shls_slice, cintopt=None, vhfo
     assert p0 is not None
     assert p1 is not None
 
+    print("s0, s1, p0, p1:", s0, s1, p0, p1)
+
     res = []
     for i in range(0, len(script_dms), 2):
-        s  = script_dms[i]
+        s  = script_dms[i].split('->s1')
         dm = script_dms[i+1]
 
-        assert "->s1" in s, "Only '->s1' is supported: %s" % s
-        s1, s2 = s.split('->s1')
-
-        assert len(s1) == 2
-        assert len(s2) == 2
-
+        einsum_expr = "xijkl,%s->x%s" % (s[0], s[1])
+        print(einsum_expr)
+        print(int2e_ip1[:, p0:p1])
+        print(dm)
+                                         
         res.append(
-            numpy.einsum(
-                "xijkl,%s->x%s" % (s1, s2),
-                int2e_ip1[:, p0:p1], dm, optimize=True
-            )
+            numpy.einsum(einsum_expr, int2e_ip1[:, p0:p1], dm)
         )
 
     return res
