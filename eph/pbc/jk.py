@@ -55,7 +55,7 @@ def get_int2e(mydf):
     v_r = tools.ifft(v_g, mesh).real
     v_r *= cell.vol / ng
     v_r = v_r.reshape(nao, nao, ng)
-    return numpy.einsum("gm,gn,klg->mnkl", phi, phi.conj(), v_r, optimize=True)
+    return -numpy.einsum("gm,gn,klg->mnkl", phi, phi.conj(), v_r, optimize=True)
 
 def _get_jk(cell, intor, comp, aosym, script_dms, shls_slice, cintopt=None, vhfopt=None):
     """

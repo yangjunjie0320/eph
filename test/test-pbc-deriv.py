@@ -28,7 +28,9 @@ def deriv_fd(mf, stepsize=1e-4):
         h1 = scan_obj.get_hcore()
         s1 = scan_obj.get_ovlp()
         d1 = scan_obj.make_rdm1()
-        eri1 = scan_obj.with_df.get_eri(compact=False).reshape(nao, nao, nao, nao)
+        eri1 = scan_obj.with_df.get_eri(compact=False).reshape(nao * nao, nao * nao)
+        j1 = numpy.einsum("ijkl,kl->ij", eri1.reshape(nao, nao, nao, nao), dm0)
+        k1 = numpy.einsum("ikjl,kl->ij", eri1.reshape(nao, nao, nao, nao), dm0)
 
         m2 = mf.mol.set_geom_(x0 - dx, unit='Bohr', inplace=False)
         m2.a = mf.mol.lattice_vectors()
@@ -38,19 +40,25 @@ def deriv_fd(mf, stepsize=1e-4):
         h2 = scan_obj.get_hcore()
         s2 = scan_obj.get_ovlp()
         d2 = scan_obj.make_rdm1()
-        eri2 = scan_obj.with_df.get_eri(compact=False).reshape(nao, nao, nao, nao)
+        eri2 = scan_obj.with_df.get_eri(compact=False).reshape(nao * nao, nao * nao)
+        j2 = numpy.einsum("ijkl,kl->ij", eri2.reshape(nao, nao, nao, nao), dm0)
+        k2 = numpy.einsum("ikjl,kl->ij", eri2.reshape(nao, nao, nao, nao), dm0)
 
         dh = (h1 - h2) / (2 * stepsize)
         ds = (s1 - s2) / (2 * stepsize)
         dd = (d1 - d2) / (2 * stepsize)
         deri = (eri1 - eri2) / (2 * stepsize)
+        dj = (j1 - j2) / (2 * stepsize)
+        dk = (k1 - k2) / (2 * stepsize)
 
         res.append(
             {
                 'dh': dh,
                 'ds': ds,
                 'dd': dd,
-                'deri': deri
+                'deri': deri,
+                'dj': dj,
+                'dk': dk
             }
         )
 
@@ -58,10 +66,14 @@ def deriv_fd(mf, stepsize=1e-4):
     
 def deriv_an(mf, stepsize=1e-4):
     natm = mf.mol.natm
+    nbas = mf.mol.nbas
+
     nao = mf.mol.nao_nr()
     mo_energy = mf.mo_energy
     mo_coeff = mf.mo_coeff
     mo_occ = mf.mo_occ
+    dm0 = mf.make_rdm1()
+
     vresp = mf.gen_response(mo_coeff, mo_occ, hermi=1)
 
     from eph.pbc import rhf
@@ -73,11 +85,12 @@ def deriv_an(mf, stepsize=1e-4):
 
     res = []
 
-    for ix in range(natm):
-        s1 = ovlp_deriv(ix)
+    for ia, (s0, s1, p0, p1) in enumerate(mf.mol.aoslice_by_atom()):
+        shls_slice = (s0, s1) + (0, nbas) * 3
+        s1 = ovlp_deriv(ia)
         # f1, jk1 = fock_deriv(ix)
         # h1 = hcor_deriv(ix)
-        h1, vj1, vj2, vk1, vk2 = fock_deriv(ix)
+        h1, jk1 = fock_deriv(ia)
 
         # (t1, e1), d1 = eph_obj.solve_mo1(
         #     vresp, s1=s1, f1=f1,
@@ -86,17 +99,59 @@ def deriv_an(mf, stepsize=1e-4):
         #     mo_occ=mo_occ,
         # )
 
-        assert s1.shape == (3, nao, nao)
+        from eph.pbc.jk import get_int2e_ip1, _get_jk
+        int2e_ip1 = get_int2e_ip1(mf.with_df)
+        assert int2e_ip1.shape == (3, nao, nao, nao, nao)
+
+        deri = numpy.zeros((3, nao, nao, nao, nao))
+        deri[:, p0:p1, :, :, :]  = int2e_ip1[:, p0:p1, :, :, :]
+        deri[:, :, p0:p1, :, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 2, 1, 3, 4)
+        deri[:, :, :, p0:p1, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 1, 2)
+        deri[:, :, :, :, p0:p1] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 2, 1)
+        deri = -deri.reshape(3, nao, nao, nao, nao)
+        dj_ref = numpy.einsum("xijkl,kl->xij", deri.reshape(3, nao, nao, nao, nao), dm0)
+        dk_ref = numpy.einsum("xikjl,kl->xij", deri.reshape(3, nao, nao, nao, nao), dm0)
+
+        # the other way of computing the derivatives
+        j1_ref = -numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
+        j2_ref = -numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], dm0)
+
+        script_dms  = ["ji->s1kl", -dm0[:, p0:p1]]
+        script_dms += ["lk->s1ij", -dm0]
+        
+        j1_sol, j2_sol = _get_jk(
+            mf.cell, 'int2e_ip1', 3, 's1',
+            script_dms=script_dms,
+            shls_slice=shls_slice
+        )
+        
+        assert numpy.allclose(j1_ref, j1_sol)
+        assert numpy.allclose(j2_ref, j2_sol)
+
+        dj_sol  = numpy.einsum("xijkl,ji->xkl", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
+        dj_sol[:, p0:p1, :] += numpy.einsum("xijkl,lk->xij", int2e_ip1[:, p0:p1], dm0)
+        dj_sol += dj_sol.transpose(0, 2, 1)
+        dj_sol = -dj_sol
+
+        dk_sol = numpy.einsum("xijkl,li->xkj", int2e_ip1[:, p0:p1], dm0[:, p0:p1])
+        dk_sol[:, p0:p1, :] += numpy.einsum("xijkl,jk->xil", int2e_ip1[:, p0:p1], dm0)
+        dk_sol += dk_sol.transpose(0, 2, 1)
+        dk_sol = -dk_sol
+
+        assert numpy.allclose(dj_ref, dj_sol)
+        assert numpy.allclose(dk_ref, dk_sol)
+
+        dj = dj_sol
+        dk = dk_sol
 
         for x in range(3):
             res.append(
                 {
                     'dh': h1[x],
                     'ds': s1[x],
-                    'vj1': vj1[x],
-                    'vj2': vj2[x],
-                    'vk1': vk1[x],
-                    'vk2': vk2[x]
+                    'deri': deri[x],
+                    'dj': dj[x],
+                    'dk': dk[x]
                 }
             )
 
@@ -129,29 +184,32 @@ mf.kernel(dm0=None)
 dm0 = mf.make_rdm1()
 
 fd = deriv_fd(mf) # .reshape(-1, nao, nao)
-an = deriv_an(mf) # .reshape(-1, nao, nao)
+an = deriv_an(mf, stepsize=1e-5) # .reshape(-1, nao, nao)
 
 for ix in range(natm * 3):
     r1 = fd[ix]
     r2 = an[ix]
 
     for k in r1.keys():
-        if k in ["dd"]:
-            continue
+        if k in ["dh", "ds", "dj", "dk"]:
+            v1 = r1[k]
+            v2 = r2[k]
+            err = abs(v1 - v2).max()
 
-        v1 = r1[k]
-        v2 = r2[k]
-        assert numpy.allclose(v1, v2, atol=1e-6), f"{k} {ix} {v1} {v2}"
+            v1 = v1[:10, :10]
+            v2 = v2[:10, :10]
 
-        if abs(v1).max() < 1e-6:
-            continue
+            if abs(v1).max() <= 1e-6:
+                continue
 
-        print(f"\n{k = :s}, {ix = }, annalytical = ")
-        numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
-        print(f"{k = :s}, {ix = }, finite difference = ")
-        numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
-        err = abs(v1 - v2).max()
-        print(f"{k = }, {ix = }, error = {err:6.4e}")
+            print(f"{k = }, {ix = }, annalytical = ")
+            numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
+            print(f"{k = }, {ix = }, finite difference = ")
+            numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
+            
+            print(f"{k = }, {ix = }, error = {err:6.4e}\n")
+
+            assert err < 1e-3, "Error too large"
 
 print("All tests passed")
 

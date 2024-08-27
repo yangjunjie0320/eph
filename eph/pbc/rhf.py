@@ -233,7 +233,8 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             if vxc_deriv is not None:
                 f1 += vxc_deriv[0, ia]
                 jk1 += vxc_deriv[1, ia]
-            return h1, vj1, vj2, vk1, vk2
+
+            return f1, jk1
 
         return func
 
