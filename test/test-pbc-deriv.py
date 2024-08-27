@@ -124,6 +124,10 @@ def deriv_an(mf, stepsize=1e-4):
             script_dms=script_dms,
             shls_slice=shls_slice
         )
+
+        print(j1_ref[0])
+        print(j1_sol[0])
+        assert 1 == 2
         
         assert numpy.allclose(j1_ref, j1_sol)
         assert numpy.allclose(j2_ref, j2_sol)
