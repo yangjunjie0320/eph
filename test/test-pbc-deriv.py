@@ -31,6 +31,7 @@ def deriv_fd(mf, stepsize=1e-4):
         eri1 = scan_obj.with_df.get_eri(compact=False).reshape(nao * nao, nao * nao)
         j1 = numpy.einsum("ijkl,kl->ij", eri1.reshape(nao, nao, nao, nao), dm0)
         k1 = numpy.einsum("ikjl,kl->ij", eri1.reshape(nao, nao, nao, nao), dm0)
+        f1 = h1 + j1 - 0.5 * k1
 
         m2 = mf.mol.set_geom_(x0 - dx, unit='Bohr', inplace=False)
         m2.a = mf.mol.lattice_vectors()
@@ -43,6 +44,7 @@ def deriv_fd(mf, stepsize=1e-4):
         eri2 = scan_obj.with_df.get_eri(compact=False).reshape(nao * nao, nao * nao)
         j2 = numpy.einsum("ijkl,kl->ij", eri2.reshape(nao, nao, nao, nao), dm0)
         k2 = numpy.einsum("ikjl,kl->ij", eri2.reshape(nao, nao, nao, nao), dm0)
+        f2 = h2 + j2 - 0.5 * k2
 
         dh = (h1 - h2) / (2 * stepsize)
         ds = (s1 - s2) / (2 * stepsize)
@@ -50,6 +52,8 @@ def deriv_fd(mf, stepsize=1e-4):
         deri = (eri1 - eri2) / (2 * stepsize)
         dj = (j1 - j2) / (2 * stepsize)
         dk = (k1 - k2) / (2 * stepsize)
+        df = (f1 - f2) / (2 * stepsize)
+        
 
         res.append(
             {
@@ -58,7 +62,8 @@ def deriv_fd(mf, stepsize=1e-4):
                 'dd': dd,
                 'deri': deri,
                 'dj': dj,
-                'dk': dk
+                'dk': dk,
+                'df': df
             }
         )
 
@@ -88,8 +93,8 @@ def deriv_an(mf, stepsize=1e-4):
     for ia, (s0, s1, p0, p1) in enumerate(mf.mol.aoslice_by_atom()):
         shls_slice = (s0, s1) + (0, nbas) * 3
         s1 = ovlp_deriv(ia)
-        # f1, jk1 = fock_deriv(ix)
-        # h1 = hcor_deriv(ix)
+        f1, jk1 = fock_deriv(ia)
+        h1 = hcor_deriv(ia)
         # h1, jk1 = fock_deriv(ia)
 
         # (t1, e1), d1 = eph_obj.solve_mo1(
@@ -101,7 +106,6 @@ def deriv_an(mf, stepsize=1e-4):
 
         from eph.pbc.jk import get_int2e_ip1, _get_jk
         int2e_ip1 = get_int2e_ip1(mf.cell)
-        int2e_ip1_ref = int2e_ip1
         assert int2e_ip1.shape == (3, nao, nao, nao, nao)
 
         deri = numpy.zeros((3, nao, nao, nao, nao))
@@ -155,7 +159,8 @@ def deriv_an(mf, stepsize=1e-4):
                     'ds': s1[x],
                     'deri': deri[x],
                     'dj': dj[x],
-                    'dk': dk[x]
+                    'dk': dk[x],
+                    "df": f1[x]
                 }
             )
 
@@ -195,7 +200,7 @@ for ix in range(natm * 3):
     r2 = an[ix]
 
     for k in r1.keys():
-        if k in ["dh", "ds", "dj", "dk"]:
+        if k in ["dh", "ds", "df"]:
             v1 = r1[k]
             v2 = r2[k]
             err = abs(v1 - v2).max()
