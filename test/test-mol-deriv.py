@@ -7,6 +7,8 @@ from pyscf import gto, scf, ao2mo
 import eph
 
 def deriv_fd(mf, stepsize=1e-4):
+    # finite difference
+
     scan_obj = mf.as_scanner()
     dm0 = mf.make_rdm1()
 
@@ -25,30 +27,34 @@ def deriv_fd(mf, stepsize=1e-4):
         h1 = scan_obj.get_hcore()
         s1 = scan_obj.get_ovlp()
         d1 = scan_obj.make_rdm1()
-        print(d1)
+        v1 = m1.intor("int1e_nuc")
         j1, k1 = scan_obj.get_jk(dm0)
         f1 = h1 + scan_obj.get_veff(m1, dm0)
+        veff1 = scan_obj.get_veff()
         eri1 = ao2mo.restore(1, scan_obj._eri, nao).reshape(nao, nao, nao, nao)
         assert eri1.shape == (nao, nao, nao, nao)
+
+        fock1 = scan_obj.get_fock()
 
         m2 = mf.mol.set_geom_(x0 - dx, unit='Bohr', inplace=False)
         scan_obj(m2)
         h2 = scan_obj.get_hcore()
         s2 = scan_obj.get_ovlp()
         d2 = scan_obj.make_rdm1()
-        print(d2)
+        v2 = m2.intor("int1e_nuc")
         j2, k2 = scan_obj.get_jk(dm0)
         f2 = h2 + scan_obj.get_veff(m2, dm0)
+        veff2 = scan_obj.get_veff()
         eri2 = ao2mo.restore(1, scan_obj._eri, nao).reshape(nao, nao, nao, nao)
         assert eri2.shape == (nao, nao, nao, nao)
+
+        fock2 = scan_obj.get_fock()
 
         dh = (h1 - h2) / (2 * stepsize)
         ds = (s1 - s2) / (2 * stepsize)
         dd = (d1 - d2) / (2 * stepsize)
-        df = (f1 - f2) / (2 * stepsize)
-
-        dj = (j1 - j2) / (2 * stepsize)
-        dk = (k1 - k2) / (2 * stepsize)
+        dveff = (veff1 - veff2) / (2 * stepsize)
+        dfock = (fock1 - fock2) / (2 * stepsize)
         deri = (eri1 - eri2) / (2 * stepsize)
         deri = deri.reshape(nao * nao, nao * nao)
 
@@ -58,13 +64,26 @@ def deriv_fd(mf, stepsize=1e-4):
                 'ds': ds,
                 'dd': dd,
                 'df': df,
-                'dj': dj,
-                'dk': dk,
-                'deri': deri
+                "dfock": dfock,
+                "dveff": dveff
             }
         )
 
     return res
+
+def gen_kine_deriv(mol):
+    nao = mol.nao_nr()
+    ipkin = mol.intor("int1e_ipkin")
+    assert t1.shape == (3, nao, nao)
+
+    def func(ia):
+        s0, s1, p0, p1 = mol.aoslice_by_atom()[ia]
+        t1 = numpy.zeros_like(ipkin)
+        t1[:, p0:p1] -= ipkin[:, p0:p1]
+        t1[:, :, p0:p1] -= ipkin[:, p0:p1].transpose(0, 2, 1)
+        return t1
+    
+    return func
     
 def deriv_an(mf, dm0=None, stepsize=1e-4):
     natm = mf.mol.natm
@@ -82,6 +101,7 @@ def deriv_an(mf, dm0=None, stepsize=1e-4):
     fock_deriv = eph_obj.gen_fock_deriv(mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ)
     ovlp_deriv = eph_obj.gen_ovlp_deriv(mol=mf.mol)
     hcor_deriv = eph_obj.gen_hcore_deriv(mol=mf.mol)
+    vnuc_deriv = eph_obj.gen_vnuc_deriv(mol=mf.mol)
     int2e_ip1 = mf.mol.intor('int2e_ip1').reshape(3, nao, nao, nao, nao)
 
     # check the permutation symmetry of int2e_ip1
@@ -94,6 +114,7 @@ def deriv_an(mf, dm0=None, stepsize=1e-4):
         s1 = ovlp_deriv(ia)
         h1 = hcor_deriv(ia)
         f1, jk1 = fock_deriv(ia)
+        v1 = vnuc_deriv(ia)
 
         (t1, e1), d1 = eph_obj.solve_mo1(
             vresp, s1=s1, f1=f1,
@@ -102,18 +123,20 @@ def deriv_an(mf, dm0=None, stepsize=1e-4):
             mo_occ=mo_occ,
         )
 
-        deri = numpy.zeros((3, nao, nao, nao, nao))
-        deri[:, p0:p1, :, :, :]  = int2e_ip1[:, p0:p1, :, :, :]
-        deri[:, :, p0:p1, :, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 2, 1, 3, 4)
-        deri[:, :, :, p0:p1, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 1, 2)
-        deri[:, :, :, :, p0:p1] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 2, 1)
-        deri = -deri.reshape(3, nao * nao, nao * nao)
+        dfock = f1 + vresp(d1)
+
+        # deri = numpy.zeros((3, nao, nao, nao, nao))
+        # deri[:, p0:p1, :, :, :]  = int2e_ip1[:, p0:p1, :, :, :]
+        # deri[:, :, p0:p1, :, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 2, 1, 3, 4)
+        # deri[:, :, :, p0:p1, :] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 1, 2)
+        # deri[:, :, :, :, p0:p1] += int2e_ip1[:, p0:p1, :, :, :].transpose(0, 3, 4, 2, 1)
+        # deri = -deri.reshape(3, nao * nao, nao * nao)
 
         assert s1.shape == (3, nao, nao)
         assert f1.shape == (3, nao, nao)
         assert d1.shape == (3, nao, nao)
         assert d1.shape == (3, nao, nao)
-        assert deri.shape == (3, nao * nao, nao * nao)
+        # assert deri.shape == (3, nao * nao, nao * nao)
 
         for x in range(3):
             res.append(
@@ -122,8 +145,9 @@ def deriv_an(mf, dm0=None, stepsize=1e-4):
                     'ds': s1[x],
                     'dd': d1[x],
                     'df': f1[x],
-
-                    'deri': deri[x]
+                    'dv': v1[x],
+                    # 'deri': deri[x],
+                    "dfock": dfock[x]
                 }
             )
 
@@ -159,22 +183,23 @@ for ix in range(natm * 3):
     r2 = an[ix]
 
     for k in r1.keys():
-        if k in ["dd"]:
-            v1 = r1[k]
-            v2 = r2[k]
-            err = abs(v1 - v2).max()
+        if not (k in ["ds", "dh", "df", "dd", "dfock"]):
+            continue
+        v1 = r1[k]
+        v2 = r2[k]
+        err = abs(v1 - v2).max()
 
-            v1 = v1[:10, :10]
-            v2 = v2[:10, :10]
+        v1 = v1[:10, :10]
+        v2 = v2[:10, :10]
 
-            print(f"\n{k = }, {ix = }, annalytical = ")
-            numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
-            print(f"{k = }, {ix = }, finite difference = ")
-            numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
-            
-            print(f"{k = }, {ix = }, error = {err:6.4e}")
+        print(f"\n{k = }, {ix = }, annalytical = ")
+        numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+        print(f"{k = }, {ix = }, finite difference = ")
+        numpy.savetxt(mf.stdout, v2, fmt='% 8.4f', delimiter=', ')
+        
+        print(f"{k = }, {ix = }, error = {err:6.4e}")
 
-            assert err < 1e-6, "Error too large"
+        assert err < 1e-6, "Error too large"
 
 print("All tests passed")
 

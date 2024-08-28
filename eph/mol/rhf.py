@@ -32,9 +32,12 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
     
     dv_ao = [] # numpy.zeros((len(atmlst), 3, nao, nao))
     for i0, ia in enumerate(atmlst):
+        v1 = vnuc_deriv(ia)
+        v1 += v1.transpose(0, 2, 1)
+
         s1 = ovlp_deriv(ia)
-        f1, v1 = fock_deriv(ia)
-        v1 = v1 + vnuc_deriv(ia)
+        f1, jk1 = fock_deriv(ia)
+        v1 += jk1
 
         (t1, e1), dm1 = eph_obj.solve_mo1(
             vresp, s1=s1, f1=f1,
@@ -43,8 +46,9 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
             mo_occ=mo_occ, verbose=log
         )
 
-        v1 += vresp(dm1)
-        dv_ao.append(v1)
+        # v1 += vresp(dm1)
+        # f1 += vresp(dm1)
+        dv_ao.append(f1 + vresp(dm1))
 
     return dv_ao
 
@@ -97,7 +101,7 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
             with mol.with_rinv_at_nucleus(ia):
                 vrinv  =  mol.intor('int1e_iprinv', comp=3)
                 vrinv *= -mol.atom_charge(ia)
-            return vrinv + vrinv.transpose(0, 2, 1)
+            return vrinv # + vrinv.transpose(0, 2, 1)
         
         return func
 
@@ -114,12 +118,24 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
             return s1
         return func
     
-    def gen_hcore_deriv(self, mol=None):
+    def _hcore_deriv(self, mol=None):
         mol = self.mol if mol is None else mol
         grad_obj = self.base.nuc_grad_method()
+        return grad_obj.get_hcore(mol=mol)
+    
+    def gen_hcore_deriv(self, mol=None):
+        mol = self.mol if mol is None else mol
+        ao_slices = mol.aoslice_by_atom()
+        h1 = self._hcore_deriv(mol=mol)
+        vnuc_deriv = self.gen_vnuc_deriv(mol=mol)
 
-        from pyscf.grad.rhf import hcore_generator
-        return hcore_generator(grad_obj, mol=mol)
+        def func(ia):
+            s0, s1, p0, p1 = ao_slices[ia]
+            dv = vnuc_deriv(ia)
+            dv[:, p0:p1] += h1[:, p0:p1]
+            return dv + dv.transpose(0, 2, 1).conj()
+        
+        return func
         
     def gen_fock_deriv(self, mo_energy=None, mo_coeff=None, mo_occ=None):
         raise NotImplementedError

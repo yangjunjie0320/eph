@@ -29,7 +29,7 @@ def gen_vnuc_deriv(cell):
 
     from pyscf.pbc.grad.krhf import get_hcore
     kpts = numpy.zeros((1, 3))
-    h1 = get_hcore(cell, kpts=kpts)[0]
+    h1 = get_hcore(cell, kpts=kpts)
     dtype = h1.dtype
 
     # Extract basic properties from the cell object
@@ -44,61 +44,57 @@ def gen_vnuc_deriv(cell):
     ptr = mole.PTR_ENV_START  # Starting index for environment in Mole object
 
     def func(atm_id):
-        shl0, shl1, p0, p1 = aoslices[atm_id]
+        s0, s1, p0, p1 = aoslices[atm_id]
         symb = cell.atom_symbol(atm_id)
         fakemol = _make_fakemol()
         vloc_g = 1j * numpy.einsum('ga,g->ag', Gv, SI[atm_id]*vlocG[atm_id])
-        nkpts = kpts.shape[0]
-        nao = cell.nao_nr()
+        nkpts, nao = h1.shape[0], h1.shape[2]
         hcore = numpy.zeros([3,nkpts,nao,nao], dtype=h1.dtype)
+        for kn, kpt in enumerate(kpts):
 
-        kn = 0
-        kpt = kpts[kn]
-        ao = eval_ao_kpts(cell, coords, kpt)[0]
-        rho = numpy.einsum('gi,gj->gij',ao.conj(),ao)
-        for ax in range(3):
-            vloc_R = tools.ifft(vloc_g[ax], mesh).real
-            vloc = numpy.einsum('gij,g->ij', rho, vloc_R)
-            hcore[ax,kn] += vloc
-        rho = None
-        aokG= tools.fftk(numpy.asarray(ao.T, order='C'),
-                            mesh, numpy.exp(-1j*numpy.dot(coords, kpt))).T
-        ao = None
-        Gk = Gv + kpt
-        G_rad = lib.norm(Gk, axis=1)
-        if symb not in cell._pseudo:
-            return hcore
-        
-        pp = cell._pseudo[symb]
-        for l, proj in enumerate(pp[5:]):
-            rl, nl, hl = proj
-            if nl >0:
-                hl = numpy.asarray(hl)
-                fakemol._bas[0,mole.ANG_OF] = l
-                fakemol._env[ptr+3] = .5*rl**2
-                fakemol._env[ptr+4] = rl**(l+1.5)*numpy.pi**1.25
-                pYlm_part = fakemol.eval_gto('GTOval', Gk)
-                pYlm = numpy.empty((nl,l*2+1,ngrids))
-                for k in range(nl):
-                    qkl = _qli(G_rad*rl, l, k)
-                    pYlm[k] = pYlm_part.T * qkl
-                SPG_lmi = numpy.einsum('g,nmg->nmg', SI[atm_id].conj(), pYlm)
-                SPG_lm_aoG = numpy.einsum('nmg,gp->nmp', SPG_lmi, aokG)
-                SPG_lmi_G = 1j * numpy.einsum('nmg, ga->anmg', SPG_lmi, Gv)
-                SPG_lm_G_aoG = numpy.einsum('anmg, gp->anmp', SPG_lmi_G, aokG)
-                tmp_1 = numpy.einsum('ij,ajmp->aimp', hl, SPG_lm_G_aoG)
-                tmp_2 = numpy.einsum('ij,jmp->imp', hl, SPG_lm_aoG)
-                vppnl = (numpy.einsum('imp,aimq->apq', SPG_lm_aoG.conj(), tmp_1) +
-                            numpy.einsum('aimp,imq->apq', SPG_lm_G_aoG.conj(), tmp_2))
-                vppnl *=(1./ngrids**2)
-                if dtype==numpy.float64:
-                    hcore[:,kn] += vppnl.real
-                else:
-                    hcore[:,kn] += vppnl
-        # hcore[:,kn,p0:p1] -= h1[:,p0:p1]
-        # hcore[:,kn,:,p0:p1] -= h1[:,p0:p1].transpose(0,2,1).conj()
-        return hcore.reshape(3, nao, nao)
-    
+            ao = eval_ao_kpts(cell, coords, kpt)[0]
+            rho = numpy.einsum('gi,gj->gij',ao.conj(),ao)
+            for ax in range(3):
+                vloc_R = tools.ifft(vloc_g[ax], mesh).real
+                vloc = numpy.einsum('gij,g->ij', rho, vloc_R)
+                hcore[ax,kn] += vloc
+            rho = None
+            aokG= tools.fftk(numpy.asarray(ao.T, order='C'),
+                              mesh, numpy.exp(-1j*numpy.dot(coords, kpt))).T
+            ao = None
+            Gk = Gv + kpt
+            G_rad = lib.norm(Gk, axis=1)
+            if symb not in cell._pseudo: continue
+            pp = cell._pseudo[symb]
+            for l, proj in enumerate(pp[5:]):
+                rl, nl, hl = proj
+                if nl >0:
+                    hl = numpy.asarray(hl)
+                    fakemol._bas[0,mole.ANG_OF] = l
+                    fakemol._env[ptr+3] = .5*rl**2
+                    fakemol._env[ptr+4] = rl**(l+1.5)*numpy.pi**1.25
+                    pYlm_part = fakemol.eval_gto('GTOval', Gk)
+                    pYlm = numpy.empty((nl,l*2+1,ngrids))
+                    for k in range(nl):
+                        qkl = _qli(G_rad*rl, l, k)
+                        pYlm[k] = pYlm_part.T * qkl
+                    SPG_lmi = numpy.einsum('g,nmg->nmg', SI[atm_id].conj(), pYlm)
+                    SPG_lm_aoG = numpy.einsum('nmg,gp->nmp', SPG_lmi, aokG)
+                    SPG_lmi_G = 1j * numpy.einsum('nmg, ga->anmg', SPG_lmi, Gv)
+                    SPG_lm_G_aoG = numpy.einsum('anmg, gp->anmp', SPG_lmi_G, aokG)
+                    tmp_1 = numpy.einsum('ij,ajmp->aimp', hl, SPG_lm_G_aoG)
+                    tmp_2 = numpy.einsum('ij,jmp->imp', hl, SPG_lm_aoG)
+                    vppnl = (numpy.einsum('imp,aimq->apq', SPG_lm_aoG.conj(), tmp_1) +
+                             numpy.einsum('aimp,imq->apq', SPG_lm_G_aoG.conj(), tmp_2))
+                    vppnl *=(1./ngrids**2)
+                    if dtype==numpy.float64:
+                        hcore[:,kn] += vppnl.real
+                    else:
+                        hcore[:,kn] += vppnl
+            # hcore[:, kn, p0:p1, :] -= h1[kn,:,p0:p1]
+            # hcore[:, kn, :, p0:p1] -= h1[kn,:,p0:p1].transpose(0,2,1).conj()
+        assert hcore.shape == (3, nkpts, nao, nao)
+        return hcore[:, 0].reshape(3, nao, nao) * 0.5
     return func
 
 def solve_mo1(vresp, s1=None, f1=None, mo_energy=None, 
@@ -152,20 +148,17 @@ class ElectronPhononCouplingBase(eph.mol.rhf.ElectronPhononCouplingBase):
         cell = self.cell if cell is None else cell
         return gen_vnuc_deriv(cell)
     
-    def gen_hcore_deriv(self, mol=None, cell=None):
-        cell = self.cell if cell is None else cell
-        from pyscf.pbc.grad.krhf import hcore_generator
+    def _hcore_deriv(self, mol=None, cell=None):
+        if cell is not None:
+            mol = cell
+        mol = self.mol if mol is None else mol
+        cell = mol
+        nao = mol.nao_nr()
 
-        hcore_deriv = hcore_generator(
-            self.base.to_kscf(), cell=cell,
-            kpts=None
-        )
-
-        def func(ia):
-            h1 = hcore_deriv(ia)
-            return h1[:, 0, :, :]
-        
-        return func
+        from pyscf.pbc.grad.krhf import get_hcore
+        h1 = get_hcore(cell, kpts=[numpy.zeros(3)])[0]
+        assert h1.shape == (3, nao, nao)
+        return -h1
 
     def gen_ovlp_deriv(self, mol=None, cell=None):
         cell = self.mol if cell is None else cell
@@ -276,7 +269,6 @@ if __name__ == '__main__':
     c = bulk("C", "diamond", a=3.5668)
 
     from pyscf.pbc import gto, scf
-
     cell = gto.Cell()
     cell.atom = ase_atoms_to_pyscf(c)
     cell.a = c.cell

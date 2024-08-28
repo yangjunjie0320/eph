@@ -144,7 +144,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             v1  = s1.get_veff(dm_kpts=dm1)
             h1  = s1.get_hcore()
             t1  = numpy.asarray(c1.pbc_intor('int1e_kin', kpts=kpts))
-            v1 += (h1 - t1)
+            v1 += (h1) #  - t1)
             # v1 += (scan_obj.get_hcore() - numpy.asarray(cell_obj.pbc_intor('int1e_kin', kpts=kpts)))
 
             c2 = cell_obj.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
@@ -163,7 +163,7 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             v2  = s2.get_veff(dm_kpts=dm2)
             h2  = s2.get_hcore()
             t2  = numpy.asarray(c2.pbc_intor('int1e_kin', kpts=kpts))
-            v2 += (h2 - t2)
+            v2 += (h2) #  - t2)
 
             # assert v1.shape == v2.shape == (nao, nao)
             dv = (v1 - v2) / (2 * stepsize)
