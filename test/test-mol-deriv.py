@@ -22,6 +22,7 @@ def deriv_fd(mf, stepsize=1e-4):
 
         dx = numpy.zeros((natm, 3))
         dx[ia, x] = stepsize
+        
         m1 = mf.mol.set_geom_(x0 + dx, unit='Bohr', inplace=False)
         scan_obj(m1)
         h1 = scan_obj.get_hcore()
@@ -124,7 +125,6 @@ def deriv_an(mf, dm0=None, stepsize=1e-4):
 
         dfock = df + vresp(drho)
         dt = kine_deriv(ia)
-        # dveff = dfock - 
 
         for x in range(3):
             res.append(

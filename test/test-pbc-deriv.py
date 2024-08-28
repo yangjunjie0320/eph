@@ -7,7 +7,6 @@ from pyscf.pbc import gto, scf
 import eph
 
 def deriv_fd(mf, stepsize=1e-4):
-    scan_obj = mf.as_scanner()
     dm0 = mf.make_rdm1()
 
     natm = mf.mol.natm
@@ -36,20 +35,18 @@ def deriv_fd(mf, stepsize=1e-4):
         mf1.max_cycle = 100
         mf1.exxdiv = None
         mf1.kernel(dm0=dm0)
+        assert mf1.converged
 
         h1 = mf1.get_hcore()
-        s1 = mf1.get_ovlp()
-        d1 = mf1.make_rdm1()
-        eri1 = mf1.with_df.get_eri(compact=False).reshape(nao * nao, nao * nao)
-        j1 = numpy.einsum("ijkl,kl->ij", eri1.reshape(nao, nao, nao, nao), dm0)
-        k1 = numpy.einsum("ikjl,kl->ij", eri1.reshape(nao, nao, nao, nao), dm0)
-        f1 = h1 + j1 - 0.5 * k1
-        fock1 = mf1.get_fock()
-        assert numpy.allclose(f1, mf1.get_fock(dm=dm0))
+        from pyscf.pbc.scf.hf import get_t
+        t1 = get_t(m1)
+        v1 = h1 - t1
 
-        c1 = mf1.mo_coeff
-        nao, nmo = c1.shape
-        assert numpy.allclose(c1.T @ s1 @ c1, numpy.eye(nmo))
+        s1 = mf1.get_ovlp()
+        rho1 = mf1.make_rdm1()
+        veff1 = mf1.get_veff()
+        fock1 = mf1.get_fock()
+        assert numpy.allclose(fock1, h1 + veff1)
 
         # the second geometry
         m2 = mf.mol.set_geom_(x0 - dx, unit='Bohr', inplace=False)
@@ -66,39 +63,35 @@ def deriv_fd(mf, stepsize=1e-4):
         mf2.max_cycle = 100
         mf2.exxdiv = None
         mf2.kernel(dm0=dm0)
+        assert mf2.converged
 
         h2 = mf2.get_hcore()
-        s2 = mf2.get_ovlp()
-        d2 = mf2.make_rdm1()
-        eri2 = mf2.with_df.get_eri(compact=False).reshape(nao * nao, nao * nao)
-        j2 = numpy.einsum("ijkl,kl->ij", eri2.reshape(nao, nao, nao, nao), dm0)
-        k2 = numpy.einsum("ikjl,kl->ij", eri2.reshape(nao, nao, nao, nao), dm0)
-        f2 = h2 + j2 - 0.5 * k2
-        fock2 = mf2.get_fock()
-        assert numpy.allclose(f2, mf2.get_fock(dm=dm0))
+        t2 = get_t(m2)
+        v2 = h2 - t2
 
-        c2 = mf2.mo_coeff
-        nao, nmo = c2.shape
-        assert numpy.allclose(c2.T @ s2 @ c2, numpy.eye(nmo))
+        s2 = mf2.get_ovlp()
+        rho2 = mf2.make_rdm1()
+        veff2 = mf2.get_veff()
+        fock2 = mf2.get_fock()
+        assert numpy.allclose(fock2, h2 + veff2)
 
         dh = (h1 - h2) / (2 * stepsize)
+        dv = (v1 - v2) / (2 * stepsize)
+        dt = (t1 - t2) / (2 * stepsize)
+
         ds = (s1 - s2) / (2 * stepsize)
-        dd = (d1 - d2) / (2 * stepsize)
-        df = (f1 - f2) / (2 * stepsize)
-        dj = (j1 - j2) / (2 * stepsize)
-        dk = (k1 - k2) / (2 * stepsize)
-        deri = (eri1 - eri2) / (2 * stepsize)
+        drho = (rho1 - rho2) / (2 * stepsize)
+        dveff = (veff1 - veff2) / (2 * stepsize)
         dfock = (fock1 - fock2) / (2 * stepsize)
 
         res.append(
             {
                 'dh': dh,
                 'ds': ds,
-                'dd': dd,
-                'deri': deri,
-                'dj': dj,
-                'dk': dk,
-                'df': df,
+                'drho': drho,
+                'dv': dv,
+                'dt': dt,
+                'dveff': dveff,
                 'dfock': dfock
             }
         )
