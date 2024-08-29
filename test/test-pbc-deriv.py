@@ -81,7 +81,7 @@ def deriv_fd(mf, stepsize=1e-4):
 
         ds = (s1 - s2) / (2 * stepsize)
         drho = (rho1 - rho2) / (2 * stepsize)
-        dveff = (veff1 - veff2) / (2 * stepsize)
+        dveff = (veff1 - veff2) / (2 * stepsize) + dv
         dfock = (fock1 - fock2) / (2 * stepsize)
 
         res.append(
@@ -97,6 +97,20 @@ def deriv_fd(mf, stepsize=1e-4):
         )
 
     return res
+
+def gen_kine_deriv(cell):
+    nao = cell.nao_nr()
+    ipkin = cell.pbc_intor("int1e_ipkin")
+    assert ipkin.shape == (3, nao, nao)
+
+    def func(ia):
+        s0, s1, p0, p1 = cell.aoslice_by_atom()[ia]
+        t1 = numpy.zeros_like(ipkin)
+        t1[:, p0:p1, :] -= ipkin[:, p0:p1]
+        t1[:, :, p0:p1] -= ipkin[:, p0:p1].transpose(0, 2, 1)
+        return t1
+    
+    return func
     
 def deriv_an(mf, stepsize=1e-4):
     natm = mf.mol.natm
@@ -122,6 +136,7 @@ def deriv_an(mf, stepsize=1e-4):
     fock_deriv = eph_obj.gen_fock_deriv(mo_energy=mo_energy, mo_coeff=mo_coeff, mo_occ=mo_occ)
     ovlp_deriv = eph_obj.gen_ovlp_deriv(mol=mf.mol)
     hcor_deriv = eph_obj.gen_hcore_deriv(mol=mf.mol)
+    kine_deriv = gen_kine_deriv(mf.cell)
 
     res = []
 
@@ -137,14 +152,21 @@ def deriv_an(mf, stepsize=1e-4):
             mo_occ=mo_occ,
         )
 
+        fock1 = f1 + vresp(d1)
+        t1 = kine_deriv(ia)
+        v1 = h1 - t1
+        veff1 = fock1 - t1
+
         for x in range(3):
             res.append(
                 {
                     'dh': h1[x],
                     'ds': s1[x],
-                    "df": f1[x],
-                    "dd": d1[x],
-                    "dfock": f1[x] + vresp(d1[x])
+                    "drho": d1[x],
+                    "dfock": fock1[x],
+                    "dt": t1[x],
+                    "dv": v1[x],
+                    "dveff": veff1[x]
                 }
             )
 
@@ -186,7 +208,9 @@ for ix in range(natm * 3):
     r2 = an[ix]
 
     for k in r2.keys():
-        # if k in ["dh", "ds", "df", "dd", "dfock"]:
+        if not (k in ["dh", "ds", "drho", "dfock", "dt", "dv", "dveff"]):
+            continue
+
         v1 = r1[k]
         v2 = r2[k]
         err = abs(v1 - v2).max()
@@ -196,13 +220,12 @@ for ix in range(natm * 3):
 
         if abs(v1).max() <= 1e-6:
             continue
-
-        print(f"{k = }, {ix = }, annalytical = ")
-        numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
-        print(f"{k = }, {ix = }, finite difference = ")
-        numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
         
-        print(f"{k = }, {ix = }, error = {err:6.4e}\n")
+        print(f"\n{k = :s}, {ix = }, error = {err:6.4e}")
+        print(f"annalytical = ")
+        numpy.savetxt(mf.stdout, v1, fmt='% 6.4f', delimiter=',')
+        print(f"finite difference = ")
+        numpy.savetxt(mf.stdout, v2, fmt='% 6.4f', delimiter=',')
 
         assert err < 1e-3, "Error too large"
 

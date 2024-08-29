@@ -104,6 +104,19 @@ class ElectronPhononCouplingBase(eph.mol.eph_fd.ElectronPhononCouplingBase):
             return vrinv # + vrinv.transpose(0, 2, 1)
         
         return func
+    
+    def gen_kine_deriv(self, mol=None):
+        mol = self.mol if mol is None else mol
+        aoslices = mol.aoslice_by_atom()
+        ipkin = mol.intor("int1e_ipkin")
+
+        def func(ia):
+            p0, p1 = aoslices[ia][2:]
+            s1 = numpy.zeros_like(ipkin)
+            s1[:, p0:p1, :] -= ipkin[:, p0:p1]
+            s1[:, :, p0:p1] -= ipkin[:, p0:p1].transpose(0, 2, 1)
+            return s1
+        return func
 
     def gen_ovlp_deriv(self, mol=None):
         mol = self.mol if mol is None else mol
