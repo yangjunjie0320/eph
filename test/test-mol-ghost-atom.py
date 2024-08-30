@@ -204,67 +204,83 @@ def deriv_an(mf, stepsize=1e-4):
     return res
 
 if __name__ == '__main__':
-    stepsize = 1e-4
-    from pyscf import gto, scf
-    mol = gto.M()
-    mol.atom = '''
-    O       0.0000000000     0.0000000000     0.1146878262
-    H      -0.7540663886    -0.0000000000    -0.4587203947
-    H       0.7540663886    -0.0000000000    -0.4587203947
-    '''
-    mol.basis = 'sto3g' # 631g*'
-    mol.verbose = 0
-    mol.symmetry = False
-    mol.cart = False
-    mol.unit = "AA"
-    mol.build()
+    for stepsize in [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]:
+        from pyscf import gto, scf
+        mol = gto.M()
+        mol.atom = '''
+        O       0.0000000000     0.0000000000     0.1146878262
+        H      -0.7540663886    -0.0000000000    -0.4587203947
+        H       0.7540663886    -0.0000000000    -0.4587203947
+        '''
+        mol.basis = 'sto3g' # 631g*'
+        mol.verbose = 0
+        mol.symmetry = False
+        mol.cart = False
+        mol.unit = "AA"
+        mol.build()
 
-    natm = mol.natm
-    nao = mol.nao_nr()
-    
-    print(f"\nstepsize = {stepsize}")
-    mf = scf.RHF(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.kernel()
+        natm = mol.natm
+        nao = mol.nao_nr()
+        
+        print(f"\nstepsize = {stepsize:6.4e}")
+        mf = scf.RHF(mol.copy())
+        mf.conv_tol = 1e-12
+        mf.conv_tol_grad = 1e-12
+        mf.max_cycle = 1000
+        mf.kernel()
 
-    from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
-    mol_a, mol_b = gen_moles(mol, stepsize / 2.0)
-    mfs = run_mfs(mf, mol_a, mol_b)
-    vmat = get_vmat(mfs, disp=stepsize)
+        from pyscf.eph.eph_fd import gen_moles, run_mfs, get_vmat
+        mol_a, mol_b = gen_moles(mol, stepsize / 2.0)
+        mfs = run_mfs(mf, mol_a, mol_b)
+        vmat = get_vmat(mf, mfs, disp=stepsize)
 
-    print(f"vmat = {vmat.shape}")
-    assert 1 == 2
+        coeff = mf.mo_coeff
+        vresp = mf.gen_response(singlet=None, hermi=1)
 
-    coeff = mf.mo_coeff
-    vresp = mf.gen_response(singlet=None, hermi=1)
+        mf = scf.RHF(mol.copy())
+        mf.conv_tol = 1e-12
+        mf.conv_tol_grad = 1e-12
+        mf.max_cycle = 1000
+        mf.kernel()
 
-    an = deriv_an(mf)
-    fd = deriv_fd(mf, stepsize) # .reshape(-1, nao, nao)
-    
+        an = deriv_an(mf)
+        fd = deriv_fd(mf, stepsize) # .reshape(-1, nao, nao)
 
-    for ix in range(natm * 3):
-        for k in fd[ix].keys():
+        for ix in range(natm * 3):
+            dv_ref = vmat[ix]
+            dv_fd = fd[ix]["dfock"]
+            dv_an = an[ix]["dfock"]
+            err = abs(dv_ref - dv_an).max()
+
+            print(f"\n{ix = }, stepsize = {stepsize:6.4e}, error = {err:6.4e}")
+
+            print(f"dv_ref = ")
+            numpy.savetxt(mf.stdout, dv_ref, fmt='% 8.4e', delimiter=', ')
+
+            print(f"dv_an = ")
+            numpy.savetxt(mf.stdout, dv_an, fmt='% 8.4e', delimiter=', ')
+
+        assert 1 == 2
+
+
+        # for k in fd[ix].keys():
             # dv stands for matrix derivative, du stands for operator derivative
             # if k not in ['ddm_mo', ]:
             #     continue
 
-            v1 = fd[ix][k] 
-            v2 = an[ix][k]
-            err = abs(v1 - v2).max()
+            # v1 = fd[ix][k] 
+            # v2 = an[ix][k]
+            # err = abs(v1 - v2).max()
 
-            v1 = v1[:10, :10]
-            v2 = v2[:10, :10]
+            # v1 = v1[:10, :10]
+            # v2 = v2[:10, :10]
 
-            print(f"\n{k = }, {ix = }, error = {err:6.4e}")
-            print("finite difference:")
-            numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+            # print(f"\n{k = }, {ix = }, error = {err:6.4e}")
+            # print("finite difference:")
+            # numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
 
-            print("analytical:")
-            numpy.savetxt(mf.stdout, v2, fmt='% 8.4f', delimiter=', ')
-
-
+            # print("analytical:")
+            # numpy.savetxt(mf.stdout, v2, fmt='% 8.4f', delimiter=', ')
 
             # v2 = an[ix]["tov"].T
             # print("\nv2 = ")
