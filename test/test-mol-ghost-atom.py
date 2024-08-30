@@ -114,9 +114,6 @@ def deriv_fd(mf, stepsize=1e-4):
     res = []
     for ix in range(natm * 3):
 
-        if ix != 0:
-            continue
-
         ia, x = divmod(ix, 3)
 
         dx = numpy.zeros_like(x0)
@@ -170,37 +167,21 @@ def deriv_fd(mf, stepsize=1e-4):
         dfock = (fock1 - fock2) / (2 * stepsize)
         drho = (dm1 - dm2) / (2 * stepsize)
 
-        t1_sol, u1_mo_sol = solve(mf, u=(u1 - vnuc))
-        norb, nocc = t1_sol.shape
-        nvir = norb - nocc
-        t1 = t1_sol[nocc:, :nocc] / stepsize * 2.0
+        ddm_mo = (dm1_mo - dm2_mo) / (2.0 * stepsize)
 
-        ddm_mo = (dm1_mo) / (stepsize)
-        ddm_mo_vo = ddm_mo[nocc:, :nocc]
+        res.append(
+            {
+                'dv': dv,
+                'du': du,
+                'dfock': dfock,
+                'drho': drho,
+                'dm1_mo': dm1_mo,
+                'dm2_mo': dm2_mo,
+                'ddm_mo': (dm1_mo - dm2_mo) / (2 * stepsize),
+            }
+        )
 
-        # print("\nddm_mo_vo = ")
-        # numpy.savetxt(mf.stdout, ddm_mo_vo, fmt='% 8.4e', delimiter=', ')
-
-        # print("\nt1 = ")
-        # numpy.savetxt(mf.stdout, t1, fmt='% 8.4e', delimiter=', ')
-
-        err = abs(t1 - ddm_mo_vo).max()
-        print(f"stepsize = {stepsize:6.4e}, error = {err:6.4e}")
-
-    #     assert 1 == 2
-    #     res.append(
-    #         {
-    #             'dv': dv,
-    #             'du': du,
-    #             'dfock': dfock,
-    #             'drho': drho,
-    #             'dm1_mo': dm1_mo,
-    #             'dm2_mo': dm2_mo,
-    #             'ddm_mo': (dm1_mo - dm2_mo) / (2 * stepsize),
-    #         }
-    #     )
-
-    # return res
+    return res
 
 def deriv_an(mf, stepsize=1e-4):
     mol = mf.mol
@@ -216,13 +197,19 @@ def deriv_an(mf, stepsize=1e-4):
         dv = vnuc_deriv(ia)
 
         for x in range(3):
-            t = solve(mf, u=(du[x]))
+            t = solve(mf, u=(du[x]))[0]
+            nmo, nocc = t.shape
+
+            drho = numpy.zeros_like(du[0])
+            drho[:, :nocc] += t
+            drho += drho.T
+            drho *= 2.0
 
             res.append(
                 {
                     'du': du[x],
                     'dv': dv[x],
-                    'drho': du[x] + dv[x],
+                    'ddm_mo': drho,
                     'tov': t
                 }
             )
@@ -230,62 +217,74 @@ def deriv_an(mf, stepsize=1e-4):
     return res
 
 if __name__ == '__main__':
-    from pyscf import gto, scf
-    mol = gto.M()
-    mol.atom = '''
-    O       0.0000000000     0.0000000000     0.1146878262
-    H      -0.7540663886    -0.0000000000    -0.4587203947
-    H       0.7540663886    -0.0000000000    -0.4587203947
-    '''
-    mol.basis = 'sto3g' # 631g*'
-    mol.verbose = 0
-    mol.symmetry = False
-    mol.cart = False
-    mol.unit = "AA"
-    mol.build()
-
-    natm = mol.natm
-    nao = mol.nao_nr()
 
 
+    stepsize = 1e-4
 
-    for stepsize in [1e-2, 5e-3, 2.5e-3, 1.25e-3, 6.25e-4]:
+    for stepsize in [1e-2, 1e-3, 1e-4, 1e-5]:
+        from pyscf import gto, scf
+        mol = gto.M()
+        mol.atom = '''
+        O       0.0000000000     0.0000000000     0.1146878262
+        H      -0.7540663886    -0.0000000000    -0.4587203947
+        H       0.7540663886    -0.0000000000    -0.4587203947
+        '''
+        mol.basis = 'sto3g' # 631g*'
+        mol.verbose = 0
+        mol.symmetry = False
+        mol.cart = False
+        mol.unit = "AA"
+        mol.build()
+
+        natm = mol.natm
+        nao = mol.nao_nr()
+        
+        print(f"\nstepsize = {stepsize}")
         mf = scf.RHF(mol)
         mf.conv_tol = 1e-12
         mf.conv_tol_grad = 1e-12
         mf.max_cycle = 1000
         mf.kernel()
+
+        an = deriv_an(mf)
         fd = deriv_fd(mf, stepsize) # .reshape(-1, nao, nao)
-    # an = deriv_an(mf, stepsize)
-    # for ix in range(natm * 3):
-    #     for k in fd[ix].keys():
-    #         # dv stands for matrix derivative, du stands for operator derivative
-    #         if k not in ['ddm_mo']:
-    #             continue
+        
 
-    #         v1 = fd[ix][k] # None # an[ix][k]
-    #         v2 = fd[ix][k]
-    #         # err = abs(v1 - v2).max()
+        for ix in range(natm * 3):
+            if ix != 0:
+                continue
 
-    #         v1 = v1[:10, :10]
-    #         v2 = v2[:10, :10]
+            for k in fd[ix].keys():
+                # dv stands for matrix derivative, du stands for operator derivative
+                if k not in ['ddm_mo', ]:
+                    continue
 
-    #         print("\nddm_mo = ")
-    #         numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+                v1 = fd[ix][k] 
+                v2 = an[ix][k]
+                err = abs(v1 - v2).max()
 
-    #         assert 1 == 2
-            # v2 = an[ix]["tov"].T
-            # print("\nv2 = ")
-            # numpy.savetxt(mf.stdout, v2, fmt='% 8.4e', delimiter=', ')
-            # assert 1 == 2
+                v1 = v1[:10, :10]
+                v2 = v2[:10, :10]
+
+                print(f"\n{k = }, {ix = }, error = {err:6.4e}")
+                print("analytical:")
+                numpy.savetxt(mf.stdout, v2, fmt='% 8.4f', delimiter=', ')
+
+                print("finite difference:")
+                numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+
+                # v2 = an[ix]["tov"].T
+                # print("\nv2 = ")
+                # numpy.savetxt(mf.stdout, v2, fmt='% 8.4e', delimiter=', ')
+                # assert 1 == 2
 
 
-            # print(f"\n{k = }, {ix = }, annalytical = ")
-            
-            # print(f"{k = }, {ix = }, finite difference = ")
-            # numpy.savetxt(mf.stdout, v2, fmt='% 8.4e', delimiter=', ')
-            
-            # print(f"{k = }, {ix = }, error = {err:6.4e}")
-            # assert 1 == 2
+                # print(f"\n{k = }, {ix = }, annalytical = ")
+                
+                # print(f"{k = }, {ix = }, finite difference = ")
+                # numpy.savetxt(mf.stdout, v2, fmt='% 8.4e', delimiter=', ')
+                
+                # print(f"{k = }, {ix = }, error = {err:6.4e}")
+                # assert 1 == 2
 
-            # assert err < 1e-5, "Error too large"
+                # assert err < 1e-5, "Error too large"
