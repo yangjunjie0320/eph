@@ -6,23 +6,124 @@ from pyscf import gto, scf, ao2mo
 
 import eph
 
+def gen_vnuc_deriv(mol):
+    # the matrix element derivative
+    # d/dx < mu | v_nuc | nu >
+    ipnuc = mol.intor("int1e_ipnuc")
+
+    def func(ia):
+        s0, s1, p0, p1 = mol.aoslice_by_atom()[ia]
+
+        with mol.with_rinv_at_nucleus(ia):
+            dv =  mol.intor("int1e_iprinv", comp=3)
+            dv *= -mol.atom_charge(ia)
+
+            dv[:, p0:p1] -= ipnuc[:, p0:p1]
+            return dv + dv.transpose(0, 2, 1).conj()
+
+    return func
+
+def gen_unuc_deriv(mol):
+    # the matrix element of the operator derivative
+    # < mu | d/dx v_nuc | nu >
+
+    def func(ia):
+        s0, s1, p0, p1 = mol.aoslice_by_atom()[ia]
+
+        with mol.with_rinv_at_nucleus(ia):
+            du =  mol.intor("int1e_iprinv", comp=3)
+            du *= -mol.atom_charge(ia)
+
+            return du + du.transpose(0, 2, 1).conj()
+
+    return func
+
+def solve(mf=None, u=None):
+    mol = mf.mol
+    nao = mol.nao_nr()
+    nbas = mol.nbas
+
+    mo_coeff = mf.mo_coeff
+    mo_occ = mf.mo_occ
+    mo_energy = mf.mo_energy
+    orb = mo_coeff
+    orbo = mo_coeff[:, mo_occ > 0]
+    orbv = mo_coeff[:, mo_occ == 0] 
+
+    nocc = orbo.shape[1]
+    nvir = orbv.shape[1]
+    nao, nmo = mo_coeff.shape
+    norb = nocc + nvir
+    assert norb == nmo
+
+    assert u.shape == (nao, nao)
+    umo = numpy.einsum("mn,mp,ni->pi", u, orb, orbo)
+    assert umo.shape == (norb, nocc)
+
+    # print("umo = ")
+    # numpy.savetxt(mf.stdout, umo * 2.0, fmt='% 8.4e', delimiter=', ')
+    # assert 1 == 2
+
+    vresp = mf.gen_response(singlet=None, hermi=1)
+
+    def func(xmo):
+        xmo = xmo.reshape(-1, norb, nocc)
+        x = numpy.einsum("xpi,mp,ni->xmn", xmo, orb, orbo)
+        dm = 2.0 * (x + x.transpose(0, 2, 1).conj())
+        v = vresp(dm)
+        vmo = numpy.einsum("xmn,mp,ni->xpi", v, orb, orbo)
+        return vmo.ravel()
+
+    # solve cphf equation
+    from pyscf.scf import cphf
+    tmo = cphf.solve(
+        func, mo_energy, mo_occ, umo,
+        s1=numpy.zeros_like(umo),
+        max_cycle=50, tol=1e-8,
+    )[0]
+    assert tmo.shape == (norb, nocc)
+
+    # print("tmo = ")
+    # numpy.savetxt(mf.stdout, tmo * 2.0, fmt='% 8.4e', delimiter=', ')
+    # assert 1 == 2 
+
+    theta = numpy.zeros_like(u)
+    theta[:, :nocc] += tmo
+    theta -= theta.T
+
+    from scipy.linalg import expm
+    u = expm(theta)
+    return tmo, u
+
 def deriv_fd(mf, stepsize=1e-4):
+    mol = mf.mol
     natm = mf.mol.natm
     symbs = [mf.mol.atom_pure_symbol(ia) for ia in range(natm)]
     x0 = mf.mol.atom_coords(unit='Bohr')
 
     basis = mf.mol.basis
     nao = mf.mol.nao_nr()
+
+    hcore = mf.get_hcore()
+    kine = mol.intor("int1e_kin")
+    vnuc = mol.intor("int1e_nuc")
+    coeff = mf.mo_coeff
+    ovlp = mf.get_ovlp()
+    assert numpy.allclose(hcore, kine + vnuc), abs(hcore - kine - vnuc).max()
     
     res = []
     for ix in range(natm * 3):
+
+        if ix != 0:
+            continue
+
         ia, x = divmod(ix, 3)
 
         dx = numpy.zeros_like(x0)
         dx[ia, x] += stepsize
         
-        atom  = [("X:" + s,   x0[ia]) for ia, s in enumerate(symbs)]
-        atom += [(s, x0[ia] + dx[ia]) for ia, s in enumerate(symbs)]
+        atom  = [(s, x0[ia] + dx[ia]) for ia, s in enumerate(symbs)]
+        atom += [("X:" + s,   x0[ia]) for ia, s in enumerate(symbs)]
 
         m1 = gto.M(
             verbose=0, unit = "Bohr",
@@ -34,8 +135,15 @@ def deriv_fd(mf, stepsize=1e-4):
         v1 = int1e_nuc[:nao, :nao] # in
         u1 = int1e_nuc[nao:, nao:]
 
-        atom  = [("X:" + s,   x0[ia]) for ia, s in enumerate(symbs)]
-        atom += [(s, x0[ia] - dx[ia]) for ia, s in enumerate(symbs)]
+        mf.get_hcore = lambda *args: kine + u1
+        mf.kernel()
+        assert mf.converged
+
+        dm1 = mf.make_rdm1()
+        fock1 = mf.get_fock(dm1)
+
+        atom  = [(s, x0[ia] - dx[ia]) for ia, s in enumerate(symbs)]
+        atom += [("X:" + s,   x0[ia]) for ia, s in enumerate(symbs)]
 
         m2 = gto.M(
             verbose=0, unit = "Bohr",
@@ -47,21 +155,79 @@ def deriv_fd(mf, stepsize=1e-4):
         v2 = int1e_nuc[:nao, :nao] # in
         u2 = int1e_nuc[nao:, nao:]
 
+        mf.get_hcore = lambda *args: kine + u2
+        mf.kernel()
+        assert mf.converged
+
+        dm2 = mf.make_rdm1()
+        fock2 = mf.get_fock(dm2)
+
+        dm1_mo = coeff.T @ ovlp @ dm1 @ ovlp @ coeff
+        dm2_mo = coeff.T @ ovlp @ dm2 @ ovlp @ coeff
+
         dv = (v1 - v2) / (2 * stepsize)
         du = (u1 - u2) / (2 * stepsize)
+        dfock = (fock1 - fock2) / (2 * stepsize)
+        drho = (dm1 - dm2) / (2 * stepsize)
 
-        res.append(
-            {
-                'dv': dv,
-                'du': du,
-            }
-        )
+        t1_sol, u1_mo_sol = solve(mf, u=(u1 - vnuc))
+        norb, nocc = t1_sol.shape
+        nvir = norb - nocc
+        t1 = t1_sol[nocc:, :nocc] / stepsize * 2.0
 
-    return res
+        ddm_mo = (dm1_mo) / (stepsize)
+        ddm_mo_vo = ddm_mo[nocc:, :nocc]
+
+        # print("\nddm_mo_vo = ")
+        # numpy.savetxt(mf.stdout, ddm_mo_vo, fmt='% 8.4e', delimiter=', ')
+
+        # print("\nt1 = ")
+        # numpy.savetxt(mf.stdout, t1, fmt='% 8.4e', delimiter=', ')
+
+        err = abs(t1 - ddm_mo_vo).max()
+        print(f"stepsize = {stepsize:6.4e}, error = {err:6.4e}")
+
+    #     assert 1 == 2
+    #     res.append(
+    #         {
+    #             'dv': dv,
+    #             'du': du,
+    #             'dfock': dfock,
+    #             'drho': drho,
+    #             'dm1_mo': dm1_mo,
+    #             'dm2_mo': dm2_mo,
+    #             'ddm_mo': (dm1_mo - dm2_mo) / (2 * stepsize),
+    #         }
+    #     )
+
+    # return res
 
 def deriv_an(mf, stepsize=1e-4):
-    pass
+    mol = mf.mol
+    nao = mol.nao_nr()
+    nbas = mol.nbas
 
+    unuc_deriv = gen_unuc_deriv(mol)
+    vnuc_deriv = gen_vnuc_deriv(mol)
+
+    res = []
+    for ia in range(mol.natm):
+        du = unuc_deriv(ia)
+        dv = vnuc_deriv(ia)
+
+        for x in range(3):
+            t = solve(mf, u=(du[x]))
+
+            res.append(
+                {
+                    'du': du[x],
+                    'dv': dv[x],
+                    'drho': du[x] + dv[x],
+                    'tov': t
+                }
+            )
+
+    return res
 
 if __name__ == '__main__':
     from pyscf import gto, scf
@@ -74,17 +240,52 @@ if __name__ == '__main__':
     mol.basis = 'sto3g' # 631g*'
     mol.verbose = 0
     mol.symmetry = False
-    mol.cart = True
+    mol.cart = False
     mol.unit = "AA"
     mol.build()
 
     natm = mol.natm
     nao = mol.nao_nr()
 
-    mf = scf.RHF(mol)
-    mf.conv_tol = 1e-12
-    mf.conv_tol_grad = 1e-12
-    mf.max_cycle = 1000
-    mf.kernel()
 
-    fd = deriv_fd(mf) # .reshape(-1, nao, nao)
+
+    for stepsize in [1e-2, 5e-3, 2.5e-3, 1.25e-3, 6.25e-4]:
+        mf = scf.RHF(mol)
+        mf.conv_tol = 1e-12
+        mf.conv_tol_grad = 1e-12
+        mf.max_cycle = 1000
+        mf.kernel()
+        fd = deriv_fd(mf, stepsize) # .reshape(-1, nao, nao)
+    # an = deriv_an(mf, stepsize)
+    # for ix in range(natm * 3):
+    #     for k in fd[ix].keys():
+    #         # dv stands for matrix derivative, du stands for operator derivative
+    #         if k not in ['ddm_mo']:
+    #             continue
+
+    #         v1 = fd[ix][k] # None # an[ix][k]
+    #         v2 = fd[ix][k]
+    #         # err = abs(v1 - v2).max()
+
+    #         v1 = v1[:10, :10]
+    #         v2 = v2[:10, :10]
+
+    #         print("\nddm_mo = ")
+    #         numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+
+    #         assert 1 == 2
+            # v2 = an[ix]["tov"].T
+            # print("\nv2 = ")
+            # numpy.savetxt(mf.stdout, v2, fmt='% 8.4e', delimiter=', ')
+            # assert 1 == 2
+
+
+            # print(f"\n{k = }, {ix = }, annalytical = ")
+            
+            # print(f"{k = }, {ix = }, finite difference = ")
+            # numpy.savetxt(mf.stdout, v2, fmt='% 8.4e', delimiter=', ')
+            
+            # print(f"{k = }, {ix = }, error = {err:6.4e}")
+            # assert 1 == 2
+
+            # assert err < 1e-5, "Error too large"
