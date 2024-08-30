@@ -57,43 +57,25 @@ def solve(mf=None, u=None):
     assert norb == nmo
 
     assert u.shape == (nao, nao)
-    umo = numpy.einsum("mn,mp,ni->pi", u, orb, orbo)
-    assert umo.shape == (norb, nocc)
-
-    # print("umo = ")
-    # numpy.savetxt(mf.stdout, umo * 2.0, fmt='% 8.4e', delimiter=', ')
-    # assert 1 == 2
+    uvo = numpy.einsum("mn,mp,ni->pi", u, orbv, orbo)
+    assert uvo.shape == (nvir, nocc)
 
     vresp = mf.gen_response(singlet=None, hermi=1)
 
-    def func(xmo):
-        xmo = xmo.reshape(-1, norb, nocc)
-        x = numpy.einsum("xpi,mp,ni->xmn", xmo, orb, orbo)
-        dm = 2.0 * (x + x.transpose(0, 2, 1).conj())
-        v = vresp(dm)
-        vmo = numpy.einsum("xmn,mp,ni->xpi", v, orb, orbo)
-        return vmo.ravel()
+    def func(xvo):
+        xvo = xvo.reshape(-1, nvir, nocc)
+        xao = numpy.einsum("xai,ma,ni->xmn", xvo, orbv, orbo, optimize=True) * 2.0
+        v = vresp(xao + xao.transpose(0, 2, 1))
+        return numpy.einsum("xmn,ma,ni->xai", v, orbv, orbo, optimize=True)
 
     # solve cphf equation
     from pyscf.scf import cphf
-    tmo = cphf.solve(
-        func, mo_energy, mo_occ, umo,
-        s1=numpy.zeros_like(umo),
+    tvo = cphf.solve(
+        func, mo_energy, mo_occ, uvo,
         max_cycle=50, tol=1e-8,
     )[0]
-    assert tmo.shape == (norb, nocc)
-
-    # print("tmo = ")
-    # numpy.savetxt(mf.stdout, tmo * 2.0, fmt='% 8.4e', delimiter=', ')
-    # assert 1 == 2 
-
-    theta = numpy.zeros_like(u)
-    theta[:, :nocc] += tmo
-    theta -= theta.T
-
-    from scipy.linalg import expm
-    u = expm(theta)
-    return tmo, u
+    assert tvo.shape == (nvir, nocc)
+    return tvo
 
 def deriv_fd(mf, stepsize=1e-4):
     mol = mf.mol
@@ -197,7 +179,7 @@ def deriv_an(mf, stepsize=1e-4):
         dv = vnuc_deriv(ia)
 
         for x in range(3):
-            t = solve(mf, u=(du[x]))[0]
+            t = solve(mf, u=(du[x]))
             nmo, nocc = t.shape
 
             drho = numpy.zeros_like(du[0])
