@@ -92,6 +92,8 @@ def deriv_fd(mf, stepsize=1e-4):
     coeff = mf.mo_coeff
     ovlp = mf.get_ovlp()
     assert numpy.allclose(hcore, kine + vnuc), abs(hcore - kine - vnuc).max()
+
+    vresp = mf.gen_response(singlet=None, hermi=1)
     
     res = []
     for ix in range(natm * 3):
@@ -119,7 +121,7 @@ def deriv_fd(mf, stepsize=1e-4):
         assert mf.converged
 
         dm1 = mf.make_rdm1()
-        fock1 = mf.get_fock(dm1)
+        fock1 = mf.get_fock(dm=dm1)
 
         atom  = [(s, x0[ia] - dx[ia]) for ia, s in enumerate(symbs)]
         atom += [("X:" + s,   x0[ia]) for ia, s in enumerate(symbs)]
@@ -139,7 +141,7 @@ def deriv_fd(mf, stepsize=1e-4):
         assert mf.converged
 
         dm2 = mf.make_rdm1()
-        fock2 = mf.get_fock(dm2)
+        fock2 = mf.get_fock(dm=dm2)
 
         dm1_mo = coeff.T @ ovlp @ dm1 @ ovlp @ coeff
         dm2_mo = coeff.T @ ovlp @ dm2 @ ovlp @ coeff
@@ -156,10 +158,10 @@ def deriv_fd(mf, stepsize=1e-4):
                 'dv': dv,
                 'du': du,
                 'dfock': dfock,
-                'drho': drho,
-                'dm1_mo': dm1_mo,
-                'dm2_mo': dm2_mo,
-                'ddm_mo': (dm1_mo - dm2_mo) / (2 * stepsize),
+                # 'drho': drho,
+                # 'dm1_mo': dm1_mo,
+                # 'dm2_mo': dm2_mo,
+                'ddm_mo': ddm_mo,
             }
         )
 
@@ -173,6 +175,9 @@ def deriv_an(mf, stepsize=1e-4):
     unuc_deriv = gen_unuc_deriv(mol)
     vnuc_deriv = gen_vnuc_deriv(mol)
 
+    coeff = mf.mo_coeff
+    vresp = mf.gen_response(singlet=None, hermi=1)
+
     res = []
     for ia in range(mol.natm):
         du = unuc_deriv(ia)
@@ -180,10 +185,10 @@ def deriv_an(mf, stepsize=1e-4):
 
         for x in range(3):
             t = solve(mf, u=(du[x]))
-            nmo, nocc = t.shape
+            nocc = t.shape[1]
 
             drho = numpy.zeros_like(du[0])
-            drho[:, :nocc] += t
+            drho[nocc:, :nocc] += t
             drho += drho.T
             drho *= 2.0
 
@@ -192,7 +197,7 @@ def deriv_an(mf, stepsize=1e-4):
                     'du': du[x],
                     'dv': dv[x],
                     'ddm_mo': drho,
-                    'tov': t
+                    'dfock': du[x] + vresp(coeff @ drho @ coeff.T)
                 }
             )
 
@@ -228,18 +233,19 @@ if __name__ == '__main__':
         mf.max_cycle = 1000
         mf.kernel()
 
+        coeff = mf.mo_coeff
+
+        vresp = mf.gen_response(singlet=None, hermi=1)
+
         an = deriv_an(mf)
         fd = deriv_fd(mf, stepsize) # .reshape(-1, nao, nao)
         
 
         for ix in range(natm * 3):
-            if ix != 0:
-                continue
-
             for k in fd[ix].keys():
                 # dv stands for matrix derivative, du stands for operator derivative
-                if k not in ['ddm_mo', ]:
-                    continue
+                # if k not in ['ddm_mo', ]:
+                #     continue
 
                 v1 = fd[ix][k] 
                 v2 = an[ix][k]
@@ -249,11 +255,13 @@ if __name__ == '__main__':
                 v2 = v2[:10, :10]
 
                 print(f"\n{k = }, {ix = }, error = {err:6.4e}")
+                print("finite difference:")
+                numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+
                 print("analytical:")
                 numpy.savetxt(mf.stdout, v2, fmt='% 8.4f', delimiter=', ')
 
-                print("finite difference:")
-                numpy.savetxt(mf.stdout, v1, fmt='% 8.4f', delimiter=', ')
+
 
                 # v2 = an[ix]["tov"].T
                 # print("\nv2 = ")
