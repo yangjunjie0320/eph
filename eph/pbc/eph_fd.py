@@ -124,49 +124,11 @@ class ElectronPhononCoupling(ElectronPhononCouplingBase):
             ia, x = divmod(ix, 3)
             p0, p1 = cell_obj.aoslice_by_atom()[ia][2:]
 
-            xyz = cell_obj.atom_coords(unit="Bohr")
-            dxyz = numpy.zeros_like(xyz)
-            dxyz[ia, x] = stepsize
-
-            c1 = cell_obj.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-            c1.a = cell_obj.lattice_vectors()
-            c1.unit = "Bohr"
-            c1.build()
-
-            s1 = kscf_obj.__class__(c1, kpts=kpts)
-            s1.exxdiv = None # kscf_obj.exxdiv
-            if hasattr(kscf_obj, "xc"):
-                s1.xc = kscf_obj.xc
-            s1.conv_tol = mf.conv_tol
-            s1.conv_tol_grad = mf.conv_tol_grad
-            s1.kernel(dm0=dm0)
-            dm1 = s1.make_rdm1()
-            v1  = s1.get_veff(dm_kpts=dm1)
-            h1  = s1.get_hcore()
-            t1  = numpy.asarray(c1.pbc_intor('int1e_kin', kpts=kpts))
-            v1 += (h1) #  - t1)
-            # v1 += (scan_obj.get_hcore() - numpy.asarray(cell_obj.pbc_intor('int1e_kin', kpts=kpts)))
-
-            c2 = cell_obj.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-            c2.a = cell_obj.lattice_vectors()
-            c2.unit = "Bohr"
-            c2.build()
-
-            s2 = kscf_obj.__class__(c2, kpts=kpts)
-            s2.exxdiv = None # mf.exxdiv
-            if hasattr(kscf_obj, "xc"):
-                s2.xc = kscf_obj.xc
-            s2.conv_tol = mf.conv_tol
-            s2.conv_tol_grad = mf.conv_tol_grad
-            s2.kernel(dm0=dm0)
-            dm2 = s2.make_rdm1()
-            v2  = s2.get_veff(dm_kpts=dm2)
-            h2  = s2.get_hcore()
-            t2  = numpy.asarray(c2.pbc_intor('int1e_kin', kpts=kpts))
-            v2 += (h2) #  - t2)
-
-            # assert v1.shape == v2.shape == (nao, nao)
-            dv = (v1 - v2) / (2 * stepsize)
+            dv = _fd(
+                scf_obj=self.base, ix=ix, 
+                atmlst=atmlst, stepsize=stepsize, 
+                dm0=dm0
+                )
             dv[:, p0:p1, :] -= v0[x, :, p0:p1]
             dv[:, :, p0:p1] -= v0[x, :, p0:p1].transpose(0, 2, 1).conj()
             assert dv.shape == (1, nao, nao)
