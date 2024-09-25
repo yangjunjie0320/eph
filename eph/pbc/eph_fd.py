@@ -38,7 +38,6 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
     ia, x = atmlst[ix // 3], ix % 3
 
     cell = scf_obj.cell
-    scan_obj = scf_obj.as_scanner()
     nao = cell.nao_nr()
 
     stdout = scf_obj.stdout
@@ -63,25 +62,26 @@ def _fd(scf_obj=None, ix=None, atmlst=None, stepsize=1e-4, v0=None, dm0=None):
 
     dm0 = dm0.reshape(scf_obj.make_rdm1().shape)
 
-    c1 = cell.set_geom_(xyz + dxyz, unit="Bohr", inplace=False)
-    c1.a = cell.lattice_vectors()
-    c1.unit = "Bohr"
-    c1.build()
+    def build(xyz):
+        c = cell.copy(deep=True)
+        c.set_geom_(xyz, unit="Bohr", inplace=True)
+        c.a = cell.lattice_vectors()
+        c.unit = "Bohr"
+        c.build()
+        
+        s = scf_obj.copy()
+        s.reset(c)
+        return c, s
 
-    scan_obj(c1, dm0=dm0)
-    dm1 = scan_obj.make_rdm1()
-    v1  = scan_obj.get_veff(dm=dm1).reshape(nao, nao)
-    v1 += scan_obj.get_hcore() - c1.pbc_intor('int1e_kin')
+    c1, s1 = build(xyz + dxyz)
+    s1.kernel(dm0=dm0)
+    v1 = s1.get_veff(dm=s1.make_rdm1()).reshape(nao, nao)
+    v1 += s1.get_hcore() - c1.pbc_intor('int1e_kin')
 
-    c2 = cell.set_geom_(xyz - dxyz, unit="Bohr", inplace=False)
-    c2.a = cell.lattice_vectors()
-    c2.unit = "Bohr"
-    c2.build()
-
-    scan_obj(c2, dm0=dm0)
-    dm2 = scan_obj.make_rdm1()
-    v2  = scan_obj.get_veff(dm=dm2).reshape(nao, nao)
-    v2 += scan_obj.get_hcore() - c2.pbc_intor('int1e_kin')
+    c2, s2 = build(xyz - dxyz)
+    s2.kernel(dm0=dm0)
+    v2  = s2.get_veff(dm=s2.make_rdm1()).reshape(nao, nao)
+    v2 += s2.get_hcore() - c2.pbc_intor('int1e_kin')
 
     assert v1.shape == v2.shape == (nao, nao)
     return (v1 - v2) / (2 * stepsize)
