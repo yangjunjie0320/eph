@@ -14,11 +14,11 @@ import eph
 from eph.mol import eph_fd, rhf
 from eph.mol.rhf import ElectronPhononCouplingBase
 
-def _get_vxc_deriv1(hessobj, mo_coeff, mo_occ, max_memory):
-    mol = hessobj.mol
-    mf = hessobj.base
-    if hessobj.grids is not None:
-        grids = hessobj.grids
+def _get_vxc_deriv1(eph_obj, mo_coeff, mo_occ, max_memory):
+    mol = eph_obj.mol
+    mf = eph_obj.base
+    if eph_obj.grids is not None:
+        grids = eph_obj.grids
     else:
         grids = mf.grids
     if grids.coords is None:
@@ -37,8 +37,12 @@ def _get_vxc_deriv1(hessobj, mo_coeff, mo_occ, max_memory):
     max_memory = max(2000, max_memory-vmat.size*8/1e6)
     if xctype == 'LDA':
         ao_deriv = 1
-        for ao, mask, weight, coords \
-                in ni.block_loop(mol, grids, nao, ao_deriv, max_memory):
+        block_loop = ni.block_loop(mol, grids, nao=nao, deriv=ao_deriv, max_memory=max_memory)
+        for tmp in block_loop:
+            ao = tmp[0]
+            mask = tmp[-3]
+            weight = tmp[-2]
+
             rho = ni.eval_rho2(mol, ao[0], mo_coeff, mo_occ, mask, xctype)
             vxc, fxc = ni.eval_xc_eff(mf.xc, rho, 2, xctype=xctype)[1:3]
             wv = weight * vxc[0]
@@ -57,8 +61,12 @@ def _get_vxc_deriv1(hessobj, mo_coeff, mo_occ, max_memory):
 
     elif xctype == 'GGA':
         ao_deriv = 2
-        for ao, mask, weight, coords \
-                in ni.block_loop(mol, grids, nao, ao_deriv, max_memory):
+        block_loop = ni.block_loop(mol, grids, nao=nao, deriv=ao_deriv, max_memory=max_memory)
+        for tmp in block_loop:
+            ao = tmp[0]
+            mask = tmp[-3]
+            weight = tmp[-2]
+            
             rho = ni.eval_rho2(mol, ao[:4], mo_coeff, mo_occ, mask, xctype)
             vxc, fxc = ni.eval_xc_eff(mf.xc, rho, 2, xctype=xctype)[1:3]
             wv = weight * vxc
@@ -106,7 +114,6 @@ class ElectronPhononCoupling(eph.mol.rhf.ElectronPhononCoupling):
 
         is_hybrid = ni.libxc.is_hybrid_xc(scf_obj.xc)
 
-        from eph.mol.rks import _get_vxc_deriv1
         vxc1 = _get_vxc_deriv1(
             self, mo_coeff, mo_occ, 
             max_memory=self.max_memory

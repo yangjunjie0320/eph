@@ -46,9 +46,8 @@ def kernel(eph_obj, mo_energy=None, mo_coeff=None, mo_occ=None,
             mo_occ=mo_occ, verbose=log
         )
 
-        # v1 += vresp(dm1)
-        # f1 += vresp(dm1)
-        dv_ao.append(f1 + vresp(dm1))
+        v1 += vresp(dm1)
+        dv_ao.append(v1)
 
     return dv_ao
 
@@ -284,14 +283,13 @@ if __name__ == '__main__':
     # assert numpy.allclose(grad, 0.0, atol=1e-3)
     # hess = mf.Hessian().kernel()
 
-    # eph_obj = ElectronPhononCoupling(mf)
-    # eph_obj.grids = None
-    # dv_sol  = eph_obj.kernel()
+    eph_obj = ElectronPhononCoupling(mf)
+    dv_sol  = eph_obj.kernel()
 
     # Test the finite difference against the analytic results
-    # eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
-    # eph_fd.verbose = 0
-    # for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
-    #     dv_ref = eph_fd.kernel(stepsize=stepsize)
-    #     err = abs(dv_sol - dv_ref).max()
-    #     print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
+    eph_fd = eph.mol.eph_fd.ElectronPhononCoupling(mf)
+    eph_fd.verbose = 0
+    for stepsize in [8e-3, 4e-3, 2e-3, 1e-3, 5e-4]:
+        dv_ref = eph_fd.kernel(stepsize=stepsize)
+        err = abs(dv_sol - dv_ref).max()
+        print("stepsize = % 6.4e, error = % 6.4e" % (stepsize, err))
