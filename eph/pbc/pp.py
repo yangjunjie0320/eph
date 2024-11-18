@@ -73,13 +73,13 @@ def _ip_vnlp(cell, phi=None, v=None, kpt=None):
     return ip_vnlp / (ng * ng)
 
 def get_ip_hcore(cell, kpts):
-    dh = cell.pbc_intor('int1e_ipkin', kpts=kpts)
-    dh = numpy.asarray(dh)
+    ip_hcore = cell.pbc_intor('int1e_ipkin', kpts=kpts)
+    ip_hcore = numpy.asarray(ip_hcore)
 
     kpts = numpy.asarray(kpts).reshape(-1, 3)
     nk = kpts.shape[0]
     nao = cell.nao_nr()
-    assert dh.shape == (nk, 3, nao, nao)
+    assert ip_hcore.shape == (nk, 3, nao, nao)
 
     mesh = cell.mesh
     ng = numpy.prod(mesh)
@@ -115,11 +115,11 @@ def get_ip_hcore(cell, kpts):
         ip_vloc = _ip_vloc(cell, v=vloc_r, phi=phi_r, kpt=kpt)
         ip_vnlp = _ip_vnlp(cell, v=si,     phi=phi_g, kpt=kpt)
 
-        if dh.dtype == numpy.float64:
+        if ip_hcore.dtype == numpy.float64:
             ip_vloc = ip_vloc.real
             ip_vnlp = ip_vnlp.real
-        dh[kn, :] += ip_vloc + ip_vnlp
-    return dh
+        ip_hcore[kn, :] += ip_vloc + ip_vnlp
+    return ip_hcore
 
 
 # def gen_hcore_deriv(cell=None, kpts=None, with_basis_response=False):
